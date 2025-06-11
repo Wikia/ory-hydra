@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: ory/ci/checkout@master
+        uses: ory/ci/checkout@9955d3e2bde28fe38cb3fae27256c90954721d02
         with:
           # We must fetch at least the immediate parents so that if this is
           # a pull request then we can checkout the head.
@@ -37,7 +37,7 @@ jobs:
     outputs:
       sdk-cache-key: ${{ steps.sdk-generate.outputs.sdk-cache-key }}
     steps:
-      - uses: ory/ci/sdk/generate@master
+      - uses: ory/ci/sdk/generate@9955d3e2bde28fe38cb3fae27256c90954721d02
         with:
           token: ${{ secrets.ORY_BOT_PAT }}
         id: sdk-generate
@@ -72,7 +72,7 @@ jobs:
             cockroachdb/cockroach:v22.1.10 start-single-node --insecure
           docker start cockroach
         name: Start CockroachDB
-      - uses: ory/ci/checkout@master
+      - uses: ory/ci/checkout@9955d3e2bde28fe38cb3fae27256c90954721d02
         with:
           fetch-depth: 2
       - uses: actions/cache@v2
@@ -85,11 +85,11 @@ jobs:
           go-version: "1.21"
       - run: go list -json > go.list
       - name: Run nancy
-        uses: sonatype-nexus-community/nancy-github-action@v1.0.2
+        uses: sonatype-nexus-community/nancy-github-action@aae196481b961d446f4bff9012e4e3b63d7921a4
         with:
           nancyVersion: v1.0.42
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v3
+        uses: golangci/golangci-lint-action@3a919529898de77ec3da873e3063ca4b10e7f5cc
         env:
           GOGC: 100
         with:
@@ -117,7 +117,7 @@ jobs:
       HSM_TOKEN_LABEL: hydra
       HSM_PIN: 1234
     steps:
-      - uses: ory/ci/checkout@master
+      - uses: ory/ci/checkout@9955d3e2bde28fe38cb3fae27256c90954721d02
       - uses: actions/cache@v2
         with:
           path: |
@@ -173,7 +173,7 @@ jobs:
             cockroachdb/cockroach:v22.1.10 start-single-node --insecure
           docker start cockroach
         name: Start CockroachDB
-      - uses: ory/ci/checkout@master
+      - uses: ory/ci/checkout@9955d3e2bde28fe38cb3fae27256c90954721d02
       - uses: actions/setup-go@v3
         with:
           go-version: "1.21"
@@ -194,7 +194,7 @@ jobs:
     needs:
       - test
     steps:
-      - uses: ory/ci/docs/cli-next@master
+      - uses: ory/ci/docs/cli-next@9955d3e2bde28fe38cb3fae27256c90954721d02
         with:
           token: ${{ secrets.ORY_BOT_PAT }}
           output-dir: docs/hydra/cli
@@ -208,7 +208,7 @@ jobs:
       - test-hsm
       - test-e2e
     steps:
-      - uses: ory/ci/changelog@master
+      - uses: ory/ci/changelog@9955d3e2bde28fe38cb3fae27256c90954721d02
         with:
           token: ${{ secrets.ORY_BOT_PAT }}
 
@@ -222,7 +222,7 @@ jobs:
       - sdk-generate
       - release
     steps:
-      - uses: ory/ci/sdk/release@master
+      - uses: ory/ci/sdk/release@9955d3e2bde28fe38cb3fae27256c90954721d02
         with:
           swag-spec-location: spec/api.json
           token: ${{ secrets.ORY_BOT_PAT }}
@@ -238,7 +238,7 @@ jobs:
       - test-e2e
       - changelog
     steps:
-      - uses: ory/ci/releaser@master
+      - uses: ory/ci/releaser@9955d3e2bde28fe38cb3fae27256c90954721d02
         with:
           token: ${{ secrets.ORY_BOT_PAT }}
           goreleaser_key: ${{ secrets.GORELEASER_KEY }}
@@ -253,7 +253,7 @@ jobs:
     needs:
       - release
     steps:
-      - uses: ory/ci/releaser/render-version-schema@master
+      - uses: ory/ci/releaser/render-version-schema@9955d3e2bde28fe38cb3fae27256c90954721d02
         with:
           schema-path: .schema/config.schema.json
           token: ${{ secrets.ORY_BOT_PAT }}
@@ -265,7 +265,7 @@ jobs:
     needs:
       - release
     steps:
-      - uses: ory/ci/newsletter@master
+      - uses: ory/ci/newsletter@9955d3e2bde28fe38cb3fae27256c90954721d02
         with:
           mailchimp_list_id: f605a41b53
           mailchmip_segment_id: 6479481
@@ -280,7 +280,7 @@ jobs:
     needs:
       - newsletter-draft
     steps:
-      - uses: ory/ci/newsletter/slack-notify@master
+      - uses: ory/ci/newsletter/slack-notify@9955d3e2bde28fe38cb3fae27256c90954721d02
         with:
           slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
 
@@ -292,7 +292,7 @@ jobs:
     if: ${{ github.ref_type == 'tag' }}
     environment: production
     steps:
-      - uses: ory/ci/newsletter@master
+      - uses: ory/ci/newsletter@9955d3e2bde28fe38cb3fae27256c90954721d02
         with:
           mailchimp_list_id: f605a41b53
           mailchmip_segment_id: 6479481
