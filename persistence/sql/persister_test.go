@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ory/hydra/v2/consent/test"
+
 	"github.com/go-jose/go-jose/v3"
 
 	"github.com/gobuffalo/pop/v6"
@@ -17,7 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ory/hydra/v2/client"
-	"github.com/ory/hydra/v2/consent"
 	"github.com/ory/hydra/v2/internal/testhelpers"
 	"github.com/ory/hydra/v2/oauth2/trust"
 	"github.com/ory/x/contextx"
@@ -27,7 +28,6 @@ import (
 	"github.com/ory/hydra/v2/jwk"
 
 	"github.com/ory/hydra/v2/driver"
-	"github.com/ory/hydra/v2/internal"
 )
 
 func init() {
@@ -52,8 +52,8 @@ func testRegistry(t *testing.T, ctx context.Context, k string, t1 driver.Registr
 		parallel = false
 	}
 
-	t.Run("package=consent/manager="+k, consent.ManagerTests(t1, t1.ConsentManager(), t1.ClientManager(), t1.OAuth2Storage(), "t1", parallel))
-	t.Run("package=consent/manager="+k, consent.ManagerTests(t2, t2.ConsentManager(), t2.ClientManager(), t2.OAuth2Storage(), "t2", parallel))
+	t.Run("package=consent/manager="+k, test.ManagerTests(t1, t1.ConsentManager(), t1.ClientManager(), t1.OAuth2Storage(), "t1", parallel))
+	t.Run("package=consent/manager="+k, test.ManagerTests(t2, t2.ConsentManager(), t2.ClientManager(), t2.OAuth2Storage(), "t2", parallel))
 
 	t.Run("parallel-boundary", func(t *testing.T) {
 		t.Run("package=consent/janitor="+k, testhelpers.JanitorTests(t1, "t1", parallel))
@@ -119,11 +119,11 @@ func testRegistry(t *testing.T, ctx context.Context, k string, t1 driver.Registr
 
 func TestManagersNextGen(t *testing.T) {
 	regs := map[string]driver.Registry{
-		"memory": internal.NewRegistrySQLFromURL(t, dbal.NewSQLiteTestDatabase(t), true, &contextx.Default{}),
+		"memory": testhelpers.NewRegistrySQLFromURL(t, dbal.NewSQLiteTestDatabase(t), true, &contextx.Default{}),
 	}
 
 	if !testing.Short() {
-		regs["postgres"], regs["mysql"], regs["cockroach"], _ = internal.ConnectDatabases(t, true, &contextx.Default{})
+		regs["postgres"], regs["mysql"], regs["cockroach"], _ = testhelpers.ConnectDatabases(t, true, &contextx.Default{})
 	}
 
 	ctx := context.Background()
@@ -152,16 +152,16 @@ func TestManagersNextGen(t *testing.T) {
 func TestManagers(t *testing.T) {
 	ctx := context.TODO()
 	t1registries := map[string]driver.Registry{
-		"memory": internal.NewRegistrySQLFromURL(t, dbal.NewSQLiteTestDatabase(t), true, &contextx.Default{}),
+		"memory": testhelpers.NewRegistrySQLFromURL(t, dbal.NewSQLiteTestDatabase(t), true, &contextx.Default{}),
 	}
 
 	t2registries := map[string]driver.Registry{
-		"memory": internal.NewRegistrySQLFromURL(t, dbal.NewSQLiteTestDatabase(t), false, &contextx.Default{}),
+		"memory": testhelpers.NewRegistrySQLFromURL(t, dbal.NewSQLiteTestDatabase(t), false, &contextx.Default{}),
 	}
 
 	if !testing.Short() {
-		t2registries["postgres"], t2registries["mysql"], t2registries["cockroach"], _ = internal.ConnectDatabases(t, false, &contextx.Default{})
-		t1registries["postgres"], t1registries["mysql"], t1registries["cockroach"], _ = internal.ConnectDatabases(t, true, &contextx.Default{})
+		t2registries["postgres"], t2registries["mysql"], t2registries["cockroach"], _ = testhelpers.ConnectDatabases(t, false, &contextx.Default{})
+		t1registries["postgres"], t1registries["mysql"], t1registries["cockroach"], _ = testhelpers.ConnectDatabases(t, true, &contextx.Default{})
 	}
 
 	network1NID, _ := uuid.NewV4()
@@ -186,7 +186,7 @@ func TestManagers(t *testing.T) {
 			)
 		}
 		t.Run("package=consent/manager="+k+"/case=nid",
-			consent.TestHelperNID(t1, t1.ConsentManager(), t2.ConsentManager()),
+			test.TestHelperNID(t1, t1.ConsentManager(), t2.ConsentManager()),
 		)
 	}
 }

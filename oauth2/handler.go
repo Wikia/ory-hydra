@@ -4,6 +4,7 @@
 package oauth2
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gobuffalo/pop/v6"
 	"github.com/tidwall/gjson"
 
 	"github.com/pborman/uuid"
@@ -495,7 +497,7 @@ func (h *Handler) discoverOidcConfiguration(w http.ResponseWriter, r *http.Reque
 		IDTokenSignedResponseAlg:               []string{key.Algorithm},
 		UserinfoSignedResponseAlg:              []string{key.Algorithm},
 		GrantTypesSupported:                    []string{"authorization_code", "implicit", "client_credentials", "refresh_token"},
-		ResponseModesSupported:                 []string{"query", "fragment"},
+		ResponseModesSupported:                 []string{"query", "fragment", "form_post"},
 		UserinfoSigningAlgValuesSupported:      []string{"none", key.Algorithm},
 		RequestParameterSupported:              true,
 		RequestURIParameterSupported:           true,
@@ -663,7 +665,7 @@ func (h *Handler) getOidcUserInfo(w http.ResponseWriter, r *http.Request) {
 		interim["jti"] = uuid.New()
 		interim["iat"] = time.Now().Unix()
 
-		keyID, err := h.r.OpenIDJWTStrategy().GetPublicKeyID(r.Context())
+		keyID, err := h.r.OpenIDJWTStrategy().GetPublicKeyID(ctx)
 		if err != nil {
 			h.r.Writer().WriteError(w, r, err)
 			return
@@ -725,11 +727,14 @@ type revokeOAuth2Token struct {
 //	  default: errorOAuth2
 func (h *Handler) revokeOAuth2Token(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	events.Trace(r.Context(), events.AccessTokenRevoked)
 
-	err := h.r.OAuth2Provider().NewRevocationRequest(ctx, r)
+	err := h.r.Persister().Transaction(ctx, func(ctx context.Context, _ *pop.Connection) error {
+		return h.r.OAuth2Provider().NewRevocationRequest(ctx, r)
+	})
 	if err != nil {
 		x.LogError(r, err, h.r.Logger())
+	} else {
+		events.Trace(ctx, events.AccessTokenRevoked)
 	}
 
 	h.r.OAuth2Provider().WriteRevocationResponse(ctx, w, err)
@@ -929,7 +934,8 @@ type oAuth2TokenExchange struct {
 // Use open source libraries to perform OAuth 2.0 and OpenID Connect
 // available for any programming language. You can find a list of libraries here https://oauth.net/code/
 //
-// The Ory SDK is not yet able to this endpoint properly.
+// This endpoint should not be used via the Ory SDK and is only included for technical reasons.
+// Instead, use one of the libraries linked above.
 //
 //	Consumes:
 //	- application/x-www-form-urlencoded
@@ -959,12 +965,13 @@ func (h *Handler) oauth2TokenExchange(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if accessRequest.GetGrantTypes().ExactOne(string(fosite.GrantTypeClientCredentials)) ||
-		accessRequest.GetGrantTypes().ExactOne(string(fosite.GrantTypeJWTBearer)) {
+		accessRequest.GetGrantTypes().ExactOne(string(fosite.GrantTypeJWTBearer)) ||
+		accessRequest.GetGrantTypes().ExactOne(string(fosite.GrantTypePassword)) {
 		var accessTokenKeyID string
 		if h.c.AccessTokenStrategy(ctx, client.AccessTokenStrategySource(accessRequest.GetClient())) == "jwt" {
 			accessTokenKeyID, err = h.r.AccessTokenJWTStrategy().GetPublicKeyID(ctx)
 			if err != nil {
-				x.LogError(r, err, h.r.Logger())
+				h.logOrAudit(err, r)
 				h.r.OAuth2Provider().WriteAccessError(ctx, w, accessRequest, err)
 				events.Trace(ctx, events.TokenExchangeError, events.WithRequest(accessRequest))
 				return
@@ -972,18 +979,30 @@ func (h *Handler) oauth2TokenExchange(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// only for client_credentials, otherwise Authentication is included in session
-		if accessRequest.GetGrantTypes().ExactOne("client_credentials") {
+		if accessRequest.GetGrantTypes().ExactOne(string(fosite.GrantTypeClientCredentials)) {
 			session.Subject = accessRequest.GetClient().GetID()
+		}
+		// only for password grant, otherwise Authentication is included in session
+		if accessRequest.GetGrantTypes().ExactOne(string(fosite.GrantTypePassword)) {
+			if sess, ok := accessRequest.GetSession().(fosite.ExtraClaimsSession); ok {
+				sess.GetExtraClaims()["username"] = accessRequest.GetRequestForm().Get("username")
+				session.DefaultSession.Username = accessRequest.GetRequestForm().Get("username")
+			}
+
+			// Also add audience claims
+			for _, aud := range accessRequest.GetClient().GetAudience() {
+				accessRequest.GrantAudience(aud)
+			}
 		}
 		session.ClientID = accessRequest.GetClient().GetID()
 		session.KID = accessTokenKeyID
-		session.DefaultSession.Claims.Issuer = h.c.IssuerURL(r.Context()).String()
+		session.DefaultSession.Claims.Issuer = h.c.IssuerURL(ctx).String()
 		session.DefaultSession.Claims.IssuedAt = time.Now().UTC()
 
 		scopes := accessRequest.GetRequestedScopes()
 
 		// Added for compatibility with MITREid
-		if h.c.GrantAllClientCredentialsScopesPerDefault(r.Context()) && len(scopes) == 0 {
+		if h.c.GrantAllClientCredentialsScopesPerDefault(ctx) && len(scopes) == 0 {
 			for _, scope := range accessRequest.GetClient().GetScopes() {
 				accessRequest.GrantScope(scope)
 			}
@@ -1003,7 +1022,7 @@ func (h *Handler) oauth2TokenExchange(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, hook := range h.r.AccessRequestHooks() {
-		if err := hook(ctx, accessRequest); err != nil {
+		if err = hook(ctx, accessRequest); err != nil {
 			h.logOrAudit(err, r)
 			h.r.OAuth2Provider().WriteAccessError(ctx, w, accessRequest, err)
 			events.Trace(ctx, events.TokenExchangeError, events.WithRequest(accessRequest))
@@ -1011,8 +1030,12 @@ func (h *Handler) oauth2TokenExchange(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	accessResponse, err := h.r.OAuth2Provider().NewAccessResponse(ctx, accessRequest)
-	if err != nil {
+	var accessResponse fosite.AccessResponder
+	if err := h.r.Persister().Transaction(ctx, func(ctx context.Context, _ *pop.Connection) error {
+		var err error
+		accessResponse, err = h.r.OAuth2Provider().NewAccessResponse(ctx, accessRequest)
+		return err
+	}); err != nil {
 		h.logOrAudit(err, r)
 		h.r.OAuth2Provider().WriteAccessError(ctx, w, accessRequest, err)
 		events.Trace(ctx, events.TokenExchangeError, events.WithRequest(accessRequest))
@@ -1029,16 +1052,18 @@ func (h *Handler) oauth2TokenExchange(w http.ResponseWriter, r *http.Request) {
 // Use open source libraries to perform OAuth 2.0 and OpenID Connect
 // available for any programming language. You can find a list of libraries at https://oauth.net/code/
 //
-// The Ory SDK is not yet able to this endpoint properly.
+// This endpoint should not be used via the Ory SDK and is only included for technical reasons.
+// Instead, use one of the libraries linked above.
 //
-//	Consumes:
-//	- application/x-www-form-urlencoded
+// Consumes:
+// - application/x-www-form-urlencoded
 //
-//	Schemes: http, https
+// Schemes: http, https
 //
-//	Responses:
-//	  302: emptyResponse
-//	  default: errorOAuth2
+// Responses:
+//
+//	302: emptyResponse
+//	default: errorOAuth2
 func (h *Handler) oAuth2Authorize(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	ctx := r.Context()
 
@@ -1080,7 +1105,7 @@ func (h *Handler) oAuth2Authorize(w http.ResponseWriter, r *http.Request, _ http
 	}
 
 	var accessTokenKeyID string
-	if h.c.AccessTokenStrategy(r.Context(), client.AccessTokenStrategySource(authorizeRequest.GetClient())) == "jwt" {
+	if h.c.AccessTokenStrategy(ctx, client.AccessTokenStrategySource(authorizeRequest.GetClient())) == "jwt" {
 		accessTokenKeyID, err = h.r.AccessTokenJWTStrategy().GetPublicKeyID(ctx)
 		if err != nil {
 			x.LogError(r, err, h.r.Logger())
@@ -1121,25 +1146,28 @@ func (h *Handler) oAuth2Authorize(w http.ResponseWriter, r *http.Request, _ http
 	claims.Add("sid", session.ConsentRequest.LoginSessionID)
 
 	// done
-	response, err := h.r.OAuth2Provider().NewAuthorizeResponse(ctx, authorizeRequest, &Session{
-		DefaultSession: &openid.DefaultSession{
-			Claims: claims,
-			Headers: &jwt.Headers{Extra: map[string]interface{}{
-				// required for lookup on jwk endpoint
-				"kid": openIDKeyID,
-			}},
-			Subject: session.ConsentRequest.Subject,
-		},
-		Extra:                 session.Session.AccessToken,
-		KID:                   accessTokenKeyID,
-		ClientID:              authorizeRequest.GetClient().GetID(),
-		ConsentChallenge:      session.ID,
-		ExcludeNotBeforeClaim: h.c.ExcludeNotBeforeClaim(ctx),
-		AllowedTopLevelClaims: h.c.AllowedTopLevelClaims(ctx),
-		MirrorTopLevelClaims:  h.c.MirrorTopLevelClaims(ctx),
-		Flow:                  flow,
-	})
-	if err != nil {
+	var response fosite.AuthorizeResponder
+	if err := h.r.Persister().Transaction(ctx, func(ctx context.Context, _ *pop.Connection) (err error) {
+		response, err = h.r.OAuth2Provider().NewAuthorizeResponse(ctx, authorizeRequest, &Session{
+			DefaultSession: &openid.DefaultSession{
+				Claims: claims,
+				Headers: &jwt.Headers{Extra: map[string]interface{}{
+					// required for lookup on jwk endpoint
+					"kid": openIDKeyID,
+				}},
+				Subject: session.ConsentRequest.Subject,
+			},
+			Extra:                 session.Session.AccessToken,
+			KID:                   accessTokenKeyID,
+			ClientID:              authorizeRequest.GetClient().GetID(),
+			ConsentChallenge:      session.ID,
+			ExcludeNotBeforeClaim: h.c.ExcludeNotBeforeClaim(ctx),
+			AllowedTopLevelClaims: h.c.AllowedTopLevelClaims(ctx),
+			MirrorTopLevelClaims:  h.c.MirrorTopLevelClaims(ctx),
+			Flow:                  flow,
+		})
+		return err
+	}); err != nil {
 		x.LogError(r, err, h.r.Logger())
 		h.writeAuthorizeError(w, r, authorizeRequest, err)
 		return

@@ -1,27 +1,26 @@
 // Copyright © 2022 Ory Corp
 // SPDX-License-Identifier: Apache-2.0
 
-package internal
+package testhelpers
 
 import (
 	"context"
 	"sync"
 	"testing"
 
+	"github.com/ory/x/dbal"
+
 	"github.com/go-jose/go-jose/v3"
-
-	"github.com/ory/x/configx"
-
 	"github.com/stretchr/testify/require"
-
-	"github.com/ory/hydra/v2/x"
-	"github.com/ory/x/contextx"
-	"github.com/ory/x/sqlcon/dockertest"
 
 	"github.com/ory/hydra/v2/driver"
 	"github.com/ory/hydra/v2/driver/config"
 	"github.com/ory/hydra/v2/jwk"
+	"github.com/ory/hydra/v2/x"
+	"github.com/ory/x/configx"
+	"github.com/ory/x/contextx"
 	"github.com/ory/x/logrusx"
+	"github.com/ory/x/sqlcon/dockertest"
 )
 
 func resetConfig(p *config.DefaultProvider) {
@@ -47,24 +46,28 @@ func NewConfigurationWithDefaultsAndHTTPS() *config.DefaultProvider {
 }
 
 func NewRegistryMemory(t testing.TB, c *config.DefaultProvider, ctxer contextx.Contextualizer) driver.Registry {
-	return newRegistryDefault(t, "memory", c, true, ctxer)
+	return registryFactory(t, dbal.NewSQLiteTestDatabase(t), c, true, ctxer)
 }
 
 func NewMockedRegistry(t testing.TB, ctxer contextx.Contextualizer) driver.Registry {
-	return newRegistryDefault(t, "memory", NewConfigurationWithDefaults(), true, ctxer)
+	return registryFactory(t, dbal.NewSQLiteTestDatabase(t), NewConfigurationWithDefaults(), true, ctxer)
 }
 
 func NewRegistrySQLFromURL(t testing.TB, url string, migrate bool, ctxer contextx.Contextualizer) driver.Registry {
-	return newRegistryDefault(t, url, NewConfigurationWithDefaults(), migrate, ctxer)
+	return registryFactory(t, url, NewConfigurationWithDefaults(), migrate, ctxer)
 }
 
-func newRegistryDefault(t testing.TB, url string, c *config.DefaultProvider, migrate bool, ctxer contextx.Contextualizer) driver.Registry {
+func registryFactory(t testing.TB, url string, c *config.DefaultProvider, migrate bool, ctxer contextx.Contextualizer) driver.Registry {
+	return RegistryFactory(t, url, c, !migrate, migrate, ctxer)
+}
+
+func RegistryFactory(t testing.TB, url string, c *config.DefaultProvider, networkInit, migrate bool, ctxer contextx.Contextualizer) driver.Registry {
 	ctx := context.Background()
 	c.MustSet(ctx, config.KeyLogLevel, "trace")
 	c.MustSet(ctx, config.KeyDSN, url)
 	c.MustSet(ctx, "dev", true)
 
-	r, err := driver.NewRegistryFromDSN(ctx, c, logrusx.New("test_hydra", "master"), false, migrate, ctxer)
+	r, err := driver.NewRegistryFromDSN(ctx, c, logrusx.New("test_hydra", "master"), networkInit, migrate, ctxer)
 	require.NoError(t, err)
 
 	return r
@@ -79,15 +82,15 @@ func CleanAndMigrate(reg driver.Registry) func(*testing.T) {
 }
 
 func ConnectToMySQL(t testing.TB) string {
-	return dockertest.RunTestMySQLWithVersion(t, "8.0.26")
+	return dockertest.RunTestMySQLWithVersion(t, "8.0")
 }
 
 func ConnectToPG(t testing.TB) string {
-	return dockertest.RunTestPostgreSQLWithVersion(t, "11.8")
+	return dockertest.RunTestPostgreSQLWithVersion(t, "16")
 }
 
 func ConnectToCRDB(t testing.TB) string {
-	return dockertest.RunTestCockroachDBWithVersion(t, "v22.1.2")
+	return dockertest.RunTestCockroachDBWithVersion(t, "latest-v24.1")
 }
 
 func ConnectDatabases(t *testing.T, migrate bool, ctxer contextx.Contextualizer) (pg, mysql, crdb driver.Registry, clean func(*testing.T)) {

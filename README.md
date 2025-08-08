@@ -3,11 +3,11 @@
 <h4 align="center">
     <a href="https://www.ory.sh/chat">Chat</a> |
     <a href="https://github.com/ory/hydra/discussions">Discussions</a> |
-    <a href="http://eepurl.com/di390P">Newsletter</a><br/><br/>
+    <a href="https://www.ory.sh/l/sign-up-newsletter">Newsletter</a><br/><br/>
     <a href="https://www.ory.sh/hydra/docs/index">Guide</a> |
     <a href="https://www.ory.sh/hydra/docs/reference/api">API Docs</a> |
     <a href="https://godoc.org/github.com/ory/hydra">Code Docs</a><br/><br/>
-    <a href="https://opencollective.com/ory">Support this project!</a><br/><br/>
+    <a href="https://console.ory.sh/">Support this project!</a><br/><br/>
     <a href="https://www.ory.sh/jobs/">Work in Open Source, Ory is hiring!</a>
 </h4>
 
@@ -609,7 +609,7 @@ that your company deserves a spot here, reach out to
                 </picture>
             </td>
             <td><a href="https://pinniped.dev/">pinniped.dev</a></td>
-        </tr>         
+        </tr>
         <tr>
             <td>Adopter *</td>
             <td>Pvotal</td>
@@ -835,7 +835,9 @@ make quicktest
 
 # regular tests
 make test
-test-resetdb
+
+# updates all snapshots
+make test-refresh
 
 # end-to-end tests
 make e2e
@@ -849,24 +851,24 @@ It is recommended to use the make file to run your tests using `make quicktest`
 **Please note**:
 
 All tests run against a sqlite in-memory database, thus it is required to use
-the `-tags sqlite,json1` build tag.
+the `-tags sqlite` build tag.
 
 Short tests run fairly quickly. You can either test all of the code at once:
 
 ```shell script
-go test -v -failfast -short -tags sqlite,json1 ./...
+go test -v -failfast -short -tags sqlite ./...
 ```
 
 or test just a specific module:
 
 ```shell script
-go test -v -failfast -short -tags sqlite,json1 ./client
+go test -v -failfast -short -tags sqlite ./client
 ```
 
 or a specific test:
 
 ```shell script
-go test -v -failfast -short -tags sqlite,json1 -run ^TestName$ ./...
+go test -v -failfast -short -tags sqlite -run ^TestName$ ./...
 ```
 
 ##### Regular Tests
@@ -977,9 +979,14 @@ If you wish to check your code changes against any of the docker-compose
 quickstart files, run:
 
 ```shell script
-make docker
-docker compose -f quickstart.yml up # ....
+docker compose -f quickstart.yml up --build # ....
 ```
+
+> [!WARNING] If you already have a production image (e.g. `oryd/hydra:v2.2.0`)
+> pulled, the above `make docker` command will replace it with a local build of
+> the image that is more equivalent to the `-distroless` variant on Docker Hub.
+>
+> You can pull the production image any time using `docker pull`
 
 #### Add a new migration
 

@@ -35,13 +35,12 @@ import (
 
 	hc "github.com/ory/hydra/v2/client"
 	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/internal"
 	"github.com/ory/hydra/v2/x"
 )
 
 func TestJWTBearer(t *testing.T) {
 	ctx := context.Background()
-	reg := internal.NewMockedRegistry(t, &contextx.Default{})
+	reg := testhelpers.NewMockedRegistry(t, &contextx.Default{})
 	reg.Config().MustSet(ctx, config.KeyAccessTokenStrategy, "opaque")
 	_, admin := testhelpers.NewOAuth2Server(ctx, t, reg)
 
@@ -326,7 +325,11 @@ func TestJWTBearer(t *testing.T) {
 
 					expectedGrantedScopes := []string{client.Scope}
 					expectedGrantedAudience := []string{audience}
-					expectedPayload := map[string][]string(map[string][]string{"assertion": {token}})
+					expectedPayload := map[string][]string{
+						"assertion":  {token},
+						"grant_type": {"urn:ietf:params:oauth:grant-type:jwt-bearer"},
+						"scope":      {"offline_access"},
+					}
 
 					var hookReq hydraoauth2.TokenHookRequest
 					require.NoError(t, json.NewDecoder(r.Body).Decode(&hookReq))
@@ -335,7 +338,7 @@ func TestJWTBearer(t *testing.T) {
 					require.NotEmpty(t, hookReq.Request)
 					require.ElementsMatch(t, hookReq.Request.GrantedScopes, expectedGrantedScopes)
 					require.ElementsMatch(t, hookReq.Request.GrantedAudience, expectedGrantedAudience)
-					require.Equal(t, hookReq.Request.Payload, expectedPayload)
+					require.Equal(t, expectedPayload, hookReq.Request.Payload)
 
 					claims := map[string]interface{}{
 						"hooked": true,
@@ -401,7 +404,12 @@ func TestJWTBearer(t *testing.T) {
 
 					expectedGrantedScopes := []string{client.Scope}
 					expectedGrantedAudience := []string{audience}
-					expectedPayload := map[string][]string(map[string][]string{"assertion": {token}})
+					expectedPayload := map[string][]string{
+						"assertion":  {token},
+						"client_id":  {client.GetID()},
+						"grant_type": {"urn:ietf:params:oauth:grant-type:jwt-bearer"},
+						"scope":      {"offline_access"},
+					}
 
 					var hookReq hydraoauth2.TokenHookRequest
 					require.NoError(t, json.NewDecoder(r.Body).Decode(&hookReq))

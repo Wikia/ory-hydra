@@ -6,6 +6,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -101,6 +102,7 @@ const (
 	KeyExcludeNotBeforeClaim                     = "oauth2.exclude_not_before_claim"
 	KeyAllowedTopLevelClaims                     = "oauth2.allowed_top_level_claims"
 	KeyMirrorTopLevelClaims                      = "oauth2.mirror_top_level_claims"
+	KeyRefreshTokenRotationGracePeriod           = "oauth2.grant.refresh_token.rotation_grace_period" // #nosec G101
 	KeyOAuth2GrantJWTIDOptional                  = "oauth2.grant.jwt.jti_optional"
 	KeyOAuth2GrantJWTIssuedDateOptional          = "oauth2.grant.jwt.iat_optional"
 	KeyOAuth2GrantJWTMaxDuration                 = "oauth2.grant.jwt.max_ttl"
@@ -134,15 +136,34 @@ func (p *DefaultProvider) GetHasherAlgorithm(ctx context.Context) x.HashAlgorith
 }
 
 func (p *DefaultProvider) HasherBcryptConfig(ctx context.Context) *hasherx.BCryptConfig {
+	var cost uint32
+	costInt := int64(p.GetBCryptCost(ctx))
+	if costInt < 0 {
+		cost = 10
+	} else if costInt > math.MaxUint32 {
+		cost = math.MaxUint32
+	} else {
+		cost = uint32(costInt)
+	}
 	return &hasherx.BCryptConfig{
-		Cost: uint32(p.GetBCryptCost(ctx)),
+		Cost: cost,
 	}
 }
 
 func (p *DefaultProvider) HasherPBKDF2Config(ctx context.Context) *hasherx.PBKDF2Config {
+	var iters uint32
+	itersInt := p.getProvider(ctx).Int64(KeyPBKDF2Iterations)
+	if itersInt < 1 {
+		iters = 1
+	} else if int64(itersInt) > math.MaxUint32 {
+		iters = math.MaxUint32
+	} else {
+		iters = uint32(itersInt)
+	}
+
 	return &hasherx.PBKDF2Config{
 		Algorithm:  "sha256",
-		Iterations: uint32(p.getProvider(ctx).Int(KeyPBKDF2Iterations)),
+		Iterations: iters,
 		SaltLength: 16,
 		KeyLength:  32,
 	}
@@ -190,6 +211,10 @@ func (p *DefaultProvider) MustSet(ctx context.Context, key string, value interfa
 	if err := p.Set(ctx, key, value); err != nil {
 		p.l.WithError(err).Fatalf("Unable to set \"%s\" to \"%s\".", key, value)
 	}
+}
+
+func (p *DefaultProvider) Delete(ctx context.Context, key string) {
+	p.getProvider(ctx).Delete(key)
 }
 
 func (p *DefaultProvider) Source(ctx context.Context) *configx.Provider {
@@ -496,6 +521,10 @@ type (
 )
 
 func (p *DefaultProvider) getHookConfig(ctx context.Context, key string) *HookConfig {
+	if p.getProvider(ctx).String(key) == "" {
+		return nil
+	}
+
 	if hookURL := p.getProvider(ctx).RequestURIF(key, nil); hookURL != nil {
 		return &HookConfig{
 			URL: hookURL.String(),
@@ -648,4 +677,12 @@ func (p *DefaultProvider) cookieSuffix(ctx context.Context, key string) string {
 	}
 
 	return p.getProvider(ctx).String(key) + suffix
+}
+
+func (p *DefaultProvider) RefreshTokenRotationGracePeriod(ctx context.Context) time.Duration {
+	gracePeriod := p.getProvider(ctx).DurationF(KeyRefreshTokenRotationGracePeriod, 0)
+	if gracePeriod > time.Minute*5 {
+		return time.Minute * 5
+	}
+	return gracePeriod
 }

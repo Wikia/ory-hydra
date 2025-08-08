@@ -26,7 +26,7 @@ if [[ ! -d "../../node_modules/" ]]; then
     (cd ../..; npm ci)
 fi
 
-(cd ../../; go build -tags sqlite,json1 -o test/e2e/hydra . )
+(cd ../../; go build -tags sqlite -o test/e2e/hydra . )
 
 # Install oauth2-client
 if [[ ! -d "./oauth2-client/node_modules/" ]]; then
@@ -92,7 +92,7 @@ case $i in
 esac
 done
 
-./hydra migrate sql --yes $TEST_DATABASE > ./hydra-migrate.e2e.log 2>&1
+./hydra migrate sql up --yes $TEST_DATABASE > ./hydra-migrate.e2e.log 2>&1
     DSN=$TEST_DATABASE \
     ./hydra serve all --dev --sqa-opt-out > ./hydra.e2e.log 2>&1 &
 

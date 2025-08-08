@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ory/hydra/v2/internal/testhelpers"
+
 	hydra "github.com/ory/hydra-client-go/v2"
 
 	"github.com/ory/x/httprouterx"
@@ -30,12 +32,12 @@ import (
 
 func TestIntrospectorSDK(t *testing.T) {
 	ctx := context.Background()
-	conf := internal.NewConfigurationWithDefaults()
+	conf := testhelpers.NewConfigurationWithDefaults()
 	conf.MustSet(ctx, config.KeyScopeStrategy, "wildcard")
 	conf.MustSet(ctx, config.KeyIssuerURL, "https://foobariss")
-	reg := internal.NewRegistryMemory(t, conf, &contextx.Default{})
+	reg := testhelpers.NewRegistryMemory(t, conf, &contextx.Default{})
 
-	internal.MustEnsureRegistryKeys(ctx, reg, x.OpenIDConnectKeyName)
+	testhelpers.MustEnsureRegistryKeys(ctx, reg, x.OpenIDConnectKeyName)
 	internal.AddFositeExamples(reg)
 
 	tokens := Tokens(reg.OAuth2ProviderConfig(), 4)
@@ -83,8 +85,8 @@ func TestIntrospectorSDK(t *testing.T) {
 			//	token:          tokens[0][1],
 			//	expectInactive: true,
 			//	expectCode:     http.StatusUnauthorized,
-			//	prepare: func(*testing.T) *hydra.OAuth2Api.{
-			//		client := hydra.Ne.OAuth2Api.ithBasePath(server.URL)
+			//	prepare: func(*testing.T) *hydra.OAuth2API.{
+			//		client := hydra.Ne.OAuth2API.ithBasePath(server.URL)
 			//		client.config.Username = "foo"
 			//		client.config.Password = "foo"
 			//		return client
@@ -148,7 +150,7 @@ func TestIntrospectorSDK(t *testing.T) {
 					client.GetConfig().Servers = hydra.ServerConfigurations{{URL: server.URL}}
 				}
 
-				ctx, _, err := client.OAuth2Api.IntrospectOAuth2Token(context.Background()).
+				ctx, _, err := client.OAuth2API.IntrospectOAuth2Token(context.Background()).
 					Token(c.token).Scope(strings.Join(c.scopes, " ")).Execute()
 				require.NoError(t, err)
 

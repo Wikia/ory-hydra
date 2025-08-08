@@ -13,7 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ory/hydra/v2/internal"
+	"github.com/ory/hydra/v2/internal/testhelpers"
+
 	"github.com/ory/x/contextx"
 
 	"github.com/bradleyjkemp/cupaloy/v2"
@@ -64,7 +65,7 @@ func TestMigrations(t *testing.T) {
 	connections := make(map[string]*pop.Connection, 1)
 
 	if testing.Short() {
-		reg := internal.NewMockedRegistry(t, &contextx.Default{})
+		reg := testhelpers.NewMockedRegistry(t, &contextx.Default{})
 		require.NoError(t, reg.Persister().MigrateUp(context.Background()))
 		c := reg.Persister().Connection(context.Background())
 		connections["sqlite"] = c
@@ -144,7 +145,7 @@ func TestMigrations(t *testing.T) {
 
 				t.Run("case=hydra_oauth2_authentication_session", func(t *testing.T) {
 					ss := []flow.LoginSession{}
-					c.All(&ss)
+					require.NoError(t, c.All(&ss))
 					require.Equal(t, 17, len(ss))
 
 					for _, s := range ss {
@@ -157,7 +158,7 @@ func TestMigrations(t *testing.T) {
 
 				t.Run("case=hydra_oauth2_obfuscated_authentication_session", func(t *testing.T) {
 					ss := []consent.ForcedObfuscatedLoginSession{}
-					c.All(&ss)
+					require.NoError(t, c.All(&ss))
 					require.Equal(t, 13, len(ss))
 
 					for _, s := range ss {
@@ -169,8 +170,8 @@ func TestMigrations(t *testing.T) {
 
 				t.Run("case=hydra_oauth2_logout_request", func(t *testing.T) {
 					lrs := []flow.LogoutRequest{}
-					c.All(&lrs)
-					require.Equal(t, 6, len(lrs))
+					require.NoError(t, c.All(&lrs))
+					require.Equal(t, 7, len(lrs))
 
 					for _, s := range lrs {
 						testhelpersuuid.AssertUUID(t, s.NID)
@@ -182,7 +183,7 @@ func TestMigrations(t *testing.T) {
 
 				t.Run("case=hydra_oauth2_jti_blacklist", func(t *testing.T) {
 					bjtis := []oauth2.BlacklistedJTI{}
-					c.All(&bjtis)
+					require.NoError(t, c.All(&bjtis))
 					require.Equal(t, 1, len(bjtis))
 					for _, bjti := range bjtis {
 						testhelpersuuid.AssertUUID(t, bjti.NID)
@@ -194,7 +195,7 @@ func TestMigrations(t *testing.T) {
 
 				t.Run("case=hydra_oauth2_access", func(t *testing.T) {
 					as := []sql.OAuth2RequestSQL{}
-					c.RawQuery("SELECT * FROM hydra_oauth2_access").All(&as)
+					require.NoError(t, c.RawQuery("SELECT * FROM hydra_oauth2_access").All(&as))
 					require.Equal(t, 13, len(as))
 
 					for _, a := range as {
@@ -210,7 +211,7 @@ func TestMigrations(t *testing.T) {
 
 				t.Run("case=hydra_oauth2_refresh", func(t *testing.T) {
 					rs := []sql.OAuth2RequestSQL{}
-					c.RawQuery("SELECT * FROM hydra_oauth2_refresh").All(&rs)
+					require.NoError(t, c.RawQuery(`SELECT signature, nid, request_id, challenge_id, requested_at, client_id, scope, granted_scope, requested_audience, granted_audience, form_data, subject, active, session_data, expires_at	FROM hydra_oauth2_refresh`).All(&rs))
 					require.Equal(t, 13, len(rs))
 
 					for _, r := range rs {
@@ -226,7 +227,7 @@ func TestMigrations(t *testing.T) {
 
 				t.Run("case=hydra_oauth2_code", func(t *testing.T) {
 					cs := []sql.OAuth2RequestSQL{}
-					c.RawQuery("SELECT * FROM hydra_oauth2_code").All(&cs)
+					require.NoError(t, c.RawQuery("SELECT * FROM hydra_oauth2_code").All(&cs))
 					require.Equal(t, 13, len(cs))
 
 					for _, c := range cs {
@@ -242,7 +243,7 @@ func TestMigrations(t *testing.T) {
 
 				t.Run("case=hydra_oauth2_oidc", func(t *testing.T) {
 					os := []sql.OAuth2RequestSQL{}
-					c.RawQuery("SELECT * FROM hydra_oauth2_oidc").All(&os)
+					require.NoError(t, c.RawQuery("SELECT * FROM hydra_oauth2_oidc").All(&os))
 					require.Equal(t, 13, len(os))
 
 					for _, o := range os {
@@ -258,7 +259,7 @@ func TestMigrations(t *testing.T) {
 
 				t.Run("case=hydra_oauth2_pkce", func(t *testing.T) {
 					ps := []sql.OAuth2RequestSQL{}
-					c.RawQuery("SELECT * FROM hydra_oauth2_pkce").All(&ps)
+					require.NoError(t, c.RawQuery("SELECT * FROM hydra_oauth2_pkce").All(&ps))
 					require.Equal(t, 11, len(ps))
 
 					for _, p := range ps {
@@ -274,7 +275,7 @@ func TestMigrations(t *testing.T) {
 
 				t.Run("case=networks", func(t *testing.T) {
 					ns := []networkx.Network{}
-					c.RawQuery("SELECT * FROM networks").All(&ns)
+					require.NoError(t, c.RawQuery("SELECT * FROM networks").All(&ns))
 					require.Equal(t, 1, len(ns))
 					for _, n := range ns {
 						testhelpersuuid.AssertUUID(t, n.ID)

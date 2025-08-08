@@ -28,6 +28,9 @@ paths:
         This endpoint returns JSON Web Keys required to verifying OpenID Connect ID Tokens and,
         if enabled, OAuth 2.0 JWT Access Tokens. This endpoint can be used with client libraries like
         [node-jwks-rsa](https://github.com/auth0/node-jwks-rsa) among others.
+
+        Adding custom keys requires first creating a keyset via the createJsonWebKeySet operation,
+        and then configuring the webfinger.jwks.broadcast_keys configuration value to include the keyset name.
       operationId: discoverJsonWebKeys
       responses:
         "200":
@@ -198,7 +201,7 @@ paths:
         "204":
           description: |-
             Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is
-            typically 201.
+            typically 204.
         default:
           content:
             application/json:
@@ -399,7 +402,7 @@ paths:
         "204":
           description: |-
             Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is
-            typically 201.
+            typically 204.
         default:
           content:
             application/json:
@@ -546,7 +549,7 @@ paths:
         "204":
           description: |-
             Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is
-            typically 201.
+            typically 204.
         default:
           content:
             application/json:
@@ -1005,7 +1008,7 @@ paths:
         "204":
           description: |-
             Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is
-            typically 201.
+            typically 204.
         default:
           content:
             application/json:
@@ -1059,7 +1062,7 @@ paths:
         "204":
           description: |-
             Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is
-            typically 201.
+            typically 204.
         default:
           content:
             application/json:
@@ -1149,6 +1152,8 @@ paths:
 
         Alternatively, you can send a SessionID via `sid` query param, in which case, only the session that is connected
         to that SessionID is revoked. OpenID Connect Back-channel logout is performed in this case.
+
+        When using Ory for the identity provider, the login provider will also invalidate the session cookie.
       operationId: revokeOAuth2LoginSessions
       parameters:
       - description: |-
@@ -1163,9 +1168,9 @@ paths:
           type: string
         style: form
       - description: |-
-          OAuth 2.0 Subject
+          Login Session ID
 
-          The subject to revoke authentication sessions for.
+          The login session to revoke.
         explode: true
         in: query
         name: sid
@@ -1177,7 +1182,7 @@ paths:
         "204":
           description: |-
             Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is
-            typically 201.
+            typically 204.
         default:
           content:
             application/json:
@@ -1233,7 +1238,7 @@ paths:
         "204":
           description: |-
             Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is
-            typically 201.
+            typically 204.
         default:
           content:
             application/json:
@@ -1339,7 +1344,7 @@ paths:
         "204":
           description: |-
             Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is
-            typically 201.
+            typically 204.
         default:
           content:
             application/json:
@@ -1479,13 +1484,14 @@ paths:
         Use open source libraries to perform OAuth 2.0 and OpenID Connect
         available for any programming language. You can find a list of libraries at https://oauth.net/code/
 
-        The Ory SDK is not yet able to this endpoint properly.
+        This endpoint should not be used via the Ory SDK and is only included for technical reasons.
+        Instead, use one of the libraries linked above.
       operationId: oAuth2Authorize
       responses:
         "302":
           description: |-
             Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is
-            typically 201.
+            typically 204.
         default:
           content:
             application/json:
@@ -1568,7 +1574,7 @@ paths:
         "204":
           description: |-
             Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is
-            typically 201.
+            typically 204.
         default:
           content:
             application/json:
@@ -1694,7 +1700,7 @@ paths:
         "200":
           description: |-
             Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is
-            typically 201.
+            typically 204.
         default:
           content:
             application/json:
@@ -1721,7 +1727,7 @@ paths:
         "302":
           description: |-
             Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is
-            typically 201.
+            typically 204.
       summary: OpenID Connect Front- and Back-channel Enabled Logout
       tags:
       - oidc
@@ -1731,7 +1737,8 @@ paths:
         Use open source libraries to perform OAuth 2.0 and OpenID Connect
         available for any programming language. You can find a list of libraries here https://oauth.net/code/
 
-        The Ory SDK is not yet able to this endpoint properly.
+        This endpoint should not be used via the Ory SDK and is only included for technical reasons.
+        Instead, use one of the libraries linked above.
       operationId: oauth2TokenExchange
       requestBody:
         content:
@@ -1811,7 +1818,7 @@ components:
     emptyResponse:
       description: |-
         Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is
-        typically 201.
+        typically 204.
     errorOAuth2BadRequest:
       content:
         application/json:
@@ -2211,6 +2218,7 @@ components:
           description: Errors contains a list of errors that caused the not ready
             status.
           type: object
+      title: The not ready status of the service.
       type: object
     healthStatus:
       example:
@@ -2219,6 +2227,7 @@ components:
         status:
           description: Status always contains "ok".
           type: string
+      title: The health status of the service.
       type: object
     introspectedOAuth2Token:
       description: |-
@@ -3548,6 +3557,7 @@ components:
       type: object
     oAuth2LogoutRequest:
       example:
+        expires_at: 2000-01-23T04:56:07.000+00:00
         subject: subject
         challenge: challenge
         client:
@@ -3617,6 +3627,7 @@ components:
           - response_types
         rp_initiated: true
         request_url: request_url
+        requested_at: 2000-01-23T04:56:07.000+00:00
         sid: sid
       properties:
         challenge:
@@ -3626,8 +3637,16 @@ components:
           type: string
         client:
           $ref: '#/components/schemas/oAuth2Client'
+        expires_at:
+          format: date-time
+          title: NullTime implements sql.NullTime functionality.
+          type: string
         request_url:
           description: RequestURL is the original Logout URL requested.
+          type: string
+        requested_at:
+          format: date-time
+          title: NullTime implements sql.NullTime functionality.
           type: string
         rp_initiated:
           description: "RPInitiated is set to true if the request was initiated by\

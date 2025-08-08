@@ -11,6 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ory/hydra/v2/internal/testhelpers"
+
+	"github.com/ory/hydra/v2/consent/test"
+
 	hydra "github.com/ory/hydra-client-go/v2"
 	. "github.com/ory/hydra/v2/flow"
 
@@ -21,7 +25,6 @@ import (
 
 	. "github.com/ory/hydra/v2/consent"
 	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/internal"
 	"github.com/ory/hydra/v2/x"
 	"github.com/ory/x/contextx"
 )
@@ -33,10 +36,10 @@ func makeID(base string, network string, key string) string {
 func TestSDK(t *testing.T) {
 	ctx := context.Background()
 	network := "t1"
-	conf := internal.NewConfigurationWithDefaults()
+	conf := testhelpers.NewConfigurationWithDefaults()
 	conf.MustSet(ctx, config.KeyIssuerURL, "https://www.ory.sh")
 	conf.MustSet(ctx, config.KeyAccessTokenLifespan, time.Minute)
-	reg := internal.NewRegistryMemory(t, conf, &contextx.Default{})
+	reg := testhelpers.NewRegistryMemory(t, conf, &contextx.Default{})
 
 	consentChallenge := func(f *Flow) string { return x.Must(f.ToConsentChallenge(ctx, reg)) }
 	consentVerifier := func(f *Flow) string { return x.Must(f.ToConsentVerifier(ctx, reg)) }
@@ -58,8 +61,8 @@ func TestSDK(t *testing.T) {
 		Subject: "subject1",
 	}))
 
-	ar1, _, _ := MockAuthRequest("1", false, network)
-	ar2, _, _ := MockAuthRequest("2", false, network)
+	ar1, _, _ := test.MockAuthRequest("1", false, network)
+	ar2, _, _ := test.MockAuthRequest("2", false, network)
 	require.NoError(t, m.CreateLoginSession(context.Background(), &LoginSession{
 		ID:      ar1.SessionID.String(),
 		Subject: ar1.Subject,
@@ -73,10 +76,10 @@ func TestSDK(t *testing.T) {
 	_, err = m.CreateLoginRequest(context.Background(), ar2)
 	require.NoError(t, err)
 
-	cr1, hcr1, _ := MockConsentRequest("1", false, 0, false, false, false, "fk-login-challenge", network)
-	cr2, hcr2, _ := MockConsentRequest("2", false, 0, false, false, false, "fk-login-challenge", network)
-	cr3, hcr3, _ := MockConsentRequest("3", true, 3600, false, false, false, "fk-login-challenge", network)
-	cr4, hcr4, _ := MockConsentRequest("4", true, 3600, false, false, false, "fk-login-challenge", network)
+	cr1, hcr1, _ := test.MockConsentRequest("1", false, 0, false, false, false, "fk-login-challenge", network)
+	cr2, hcr2, _ := test.MockConsentRequest("2", false, 0, false, false, false, "fk-login-challenge", network)
+	cr3, hcr3, _ := test.MockConsentRequest("3", true, 3600, false, false, false, "fk-login-challenge", network)
+	cr4, hcr4, _ := test.MockConsentRequest("4", true, 3600, false, false, false, "fk-login-challenge", network)
 	require.NoError(t, reg.ClientManager().CreateClient(context.Background(), cr1.Client))
 	require.NoError(t, reg.ClientManager().CreateClient(context.Background(), cr2.Client))
 	require.NoError(t, reg.ClientManager().CreateClient(context.Background(), cr3.Client))
@@ -144,84 +147,84 @@ func TestSDK(t *testing.T) {
 	_, err = m.VerifyAndInvalidateConsentRequest(context.Background(), consentVerifier(cr4Flow))
 	require.NoError(t, err)
 
-	lur1 := MockLogoutRequest("testsdk-1", true, network)
+	lur1 := test.MockLogoutRequest("testsdk-1", true, network)
 	require.NoError(t, reg.ClientManager().CreateClient(context.Background(), lur1.Client))
 	require.NoError(t, m.CreateLogoutRequest(context.Background(), lur1))
 
-	lur2 := MockLogoutRequest("testsdk-2", false, network)
+	lur2 := test.MockLogoutRequest("testsdk-2", false, network)
 	require.NoError(t, m.CreateLogoutRequest(context.Background(), lur2))
 
 	cr1.ID = consentChallenge(cr1Flow)
-	crGot := execute[hydra.OAuth2ConsentRequest](t, sdk.OAuth2Api.GetOAuth2ConsentRequest(ctx).ConsentChallenge(cr1.ID))
+	crGot := execute[hydra.OAuth2ConsentRequest](t, sdk.OAuth2API.GetOAuth2ConsentRequest(ctx).ConsentChallenge(cr1.ID))
 	compareSDKConsentRequest(t, cr1, *crGot)
 
 	cr2.ID = consentChallenge(cr2Flow)
-	crGot = execute[hydra.OAuth2ConsentRequest](t, sdk.OAuth2Api.GetOAuth2ConsentRequest(ctx).ConsentChallenge(cr2.ID))
+	crGot = execute[hydra.OAuth2ConsentRequest](t, sdk.OAuth2API.GetOAuth2ConsentRequest(ctx).ConsentChallenge(cr2.ID))
 	compareSDKConsentRequest(t, cr2, *crGot)
 
 	ar1.ID = loginChallenge(cr1Flow)
-	arGot := execute[hydra.OAuth2LoginRequest](t, sdk.OAuth2Api.GetOAuth2LoginRequest(ctx).LoginChallenge(ar1.ID))
+	arGot := execute[hydra.OAuth2LoginRequest](t, sdk.OAuth2API.GetOAuth2LoginRequest(ctx).LoginChallenge(ar1.ID))
 	compareSDKLoginRequest(t, ar1, *arGot)
 
 	ar2.ID = loginChallenge(cr2Flow)
-	arGot = execute[hydra.OAuth2LoginRequest](t, sdk.OAuth2Api.GetOAuth2LoginRequest(ctx).LoginChallenge(ar2.ID))
+	arGot = execute[hydra.OAuth2LoginRequest](t, sdk.OAuth2API.GetOAuth2LoginRequest(ctx).LoginChallenge(ar2.ID))
 	require.NoError(t, err)
 	compareSDKLoginRequest(t, ar2, *arGot)
 
-	_, err = sdk.OAuth2Api.RevokeOAuth2LoginSessions(ctx).Subject("subject1").Execute()
+	_, err = sdk.OAuth2API.RevokeOAuth2LoginSessions(ctx).Subject("subject1").Execute()
 	require.NoError(t, err)
 
-	_, err = sdk.OAuth2Api.RevokeOAuth2ConsentSessions(ctx).Subject("subject1").Execute()
+	_, err = sdk.OAuth2API.RevokeOAuth2ConsentSessions(ctx).Subject("subject1").Execute()
 	require.Error(t, err)
 
-	_, err = sdk.OAuth2Api.RevokeOAuth2ConsentSessions(ctx).Subject(cr4.Subject).Client(cr4.Client.GetID()).Execute()
+	_, err = sdk.OAuth2API.RevokeOAuth2ConsentSessions(ctx).Subject(cr4.Subject).Client(cr4.Client.GetID()).Execute()
 	require.NoError(t, err)
 
-	_, err = sdk.OAuth2Api.RevokeOAuth2ConsentSessions(ctx).Subject("subject1").All(true).Execute()
+	_, err = sdk.OAuth2API.RevokeOAuth2ConsentSessions(ctx).Subject("subject1").All(true).Execute()
 	require.NoError(t, err)
 
-	_, _, err = sdk.OAuth2Api.GetOAuth2ConsentRequest(ctx).ConsentChallenge(makeID("challenge", network, "1")).Execute()
+	_, _, err = sdk.OAuth2API.GetOAuth2ConsentRequest(ctx).ConsentChallenge(makeID("challenge", network, "1")).Execute()
 	require.Error(t, err)
 
 	cr2.ID = consentChallenge(cr2Flow)
-	crGot, _, err = sdk.OAuth2Api.GetOAuth2ConsentRequest(ctx).ConsentChallenge(cr2.ID).Execute()
+	crGot, _, err = sdk.OAuth2API.GetOAuth2ConsentRequest(ctx).ConsentChallenge(cr2.ID).Execute()
 	require.NoError(t, err)
 	compareSDKConsentRequest(t, cr2, *crGot)
 
-	_, err = sdk.OAuth2Api.RevokeOAuth2ConsentSessions(ctx).Subject("subject2").Client("fk-client-2").Execute()
+	_, err = sdk.OAuth2API.RevokeOAuth2ConsentSessions(ctx).Subject("subject2").Client("fk-client-2").Execute()
 	require.NoError(t, err)
 
-	_, _, err = sdk.OAuth2Api.GetOAuth2ConsentRequest(ctx).ConsentChallenge(makeID("challenge", network, "2")).Execute()
+	_, _, err = sdk.OAuth2API.GetOAuth2ConsentRequest(ctx).ConsentChallenge(makeID("challenge", network, "2")).Execute()
 	require.Error(t, err)
 
-	csGot, _, err := sdk.OAuth2Api.ListOAuth2ConsentSessions(ctx).Subject("subject3").Execute()
+	csGot, _, err := sdk.OAuth2API.ListOAuth2ConsentSessions(ctx).Subject("subject3").Execute()
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(csGot))
 
-	csGot, _, err = sdk.OAuth2Api.ListOAuth2ConsentSessions(ctx).Subject("subject2").Execute()
+	csGot, _, err = sdk.OAuth2API.ListOAuth2ConsentSessions(ctx).Subject("subject2").Execute()
 	require.NoError(t, err)
 	assert.Equal(t, 0, len(csGot))
 
-	csGot, _, err = sdk.OAuth2Api.ListOAuth2ConsentSessions(ctx).Subject("subject3").LoginSessionId("fk-login-session-t1-3").Execute()
+	csGot, _, err = sdk.OAuth2API.ListOAuth2ConsentSessions(ctx).Subject("subject3").LoginSessionId("fk-login-session-t1-3").Execute()
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(csGot))
 
-	csGot, _, err = sdk.OAuth2Api.ListOAuth2ConsentSessions(ctx).Subject("subject3").LoginSessionId("fk-login-session-t1-X").Execute()
+	csGot, _, err = sdk.OAuth2API.ListOAuth2ConsentSessions(ctx).Subject("subject3").LoginSessionId("fk-login-session-t1-X").Execute()
 	require.NoError(t, err)
 	assert.Equal(t, 0, len(csGot))
 
-	luGot, _, err := sdk.OAuth2Api.GetOAuth2LogoutRequest(ctx).LogoutChallenge(makeID("challenge", network, "testsdk-1")).Execute()
+	luGot, _, err := sdk.OAuth2API.GetOAuth2LogoutRequest(ctx).LogoutChallenge(makeID("challenge", network, "testsdk-1")).Execute()
 	require.NoError(t, err)
 	compareSDKLogoutRequest(t, lur1, luGot)
 
-	luaGot, _, err := sdk.OAuth2Api.AcceptOAuth2LogoutRequest(ctx).LogoutChallenge(makeID("challenge", network, "testsdk-1")).Execute()
+	luaGot, _, err := sdk.OAuth2API.AcceptOAuth2LogoutRequest(ctx).LogoutChallenge(makeID("challenge", network, "testsdk-1")).Execute()
 	require.NoError(t, err)
 	assert.EqualValues(t, "https://www.ory.sh/oauth2/sessions/logout?logout_verifier="+makeID("verifier", network, "testsdk-1"), luaGot.RedirectTo)
 
-	_, err = sdk.OAuth2Api.RejectOAuth2LogoutRequest(ctx).LogoutChallenge(lur2.ID).Execute()
+	_, err = sdk.OAuth2API.RejectOAuth2LogoutRequest(ctx).LogoutChallenge(lur2.ID).Execute()
 	require.NoError(t, err)
 
-	_, _, err = sdk.OAuth2Api.GetOAuth2LogoutRequest(ctx).LogoutChallenge(lur2.ID).Execute()
+	_, _, err = sdk.OAuth2API.GetOAuth2LogoutRequest(ctx).LogoutChallenge(lur2.ID).Execute()
 	require.Error(t, err)
 }
 

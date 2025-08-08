@@ -28,14 +28,13 @@ import (
 
 	hc "github.com/ory/hydra/v2/client"
 	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/internal"
 	"github.com/ory/hydra/v2/x"
 	"github.com/ory/x/requirex"
 )
 
 func TestClientCredentials(t *testing.T) {
 	ctx := context.Background()
-	reg := internal.NewMockedRegistry(t, &contextx.Default{})
+	reg := testhelpers.NewMockedRegistry(t, &contextx.Default{})
 	reg.Config().MustSet(ctx, config.KeyAccessTokenStrategy, "opaque")
 	public, admin := testhelpers.NewOAuth2Server(ctx, t, reg)
 
@@ -268,7 +267,10 @@ func TestClientCredentials(t *testing.T) {
 					require.NotEmpty(t, hookReq.Request)
 					require.ElementsMatch(t, hookReq.Request.GrantedScopes, expectedGrantedScopes)
 					require.ElementsMatch(t, hookReq.Request.GrantedAudience, expectedGrantedAudience)
-					require.Equal(t, hookReq.Request.Payload, map[string][]string{})
+					require.Equal(t, hookReq.Request.Payload, map[string][]string{
+						"grant_type": {"client_credentials"},
+						"scope":      {"foobar"},
+					})
 
 					claims := map[string]interface{}{
 						"hooked": true,

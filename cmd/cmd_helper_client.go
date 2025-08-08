@@ -5,6 +5,8 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -16,37 +18,55 @@ import (
 	"github.com/ory/x/pointerx"
 )
 
-func clientFromFlags(cmd *cobra.Command) hydra.OAuth2Client {
+func clientFromFlags(cmd *cobra.Command) (hydra.OAuth2Client, error) {
+	if filename := flagx.MustGetString(cmd, flagFile); filename != "" {
+		src := cmd.InOrStdin()
+		if filename != "-" {
+			f, err := os.Open(filename)
+			if err != nil {
+				return hydra.OAuth2Client{}, fmt.Errorf("unable to open file %q: %w", filename, err)
+			}
+			defer f.Close()
+			src = f
+		}
+		client := hydra.OAuth2Client{}
+		if err := json.NewDecoder(src).Decode(&client); err != nil {
+			return hydra.OAuth2Client{}, fmt.Errorf("unable to decode JSON: %w", err)
+		}
+		return client, nil
+	}
+
 	return hydra.OAuth2Client{
+		AccessTokenStrategy:               pointerx.Ptr(flagx.MustGetString(cmd, flagClientAccessTokenStrategy)),
 		AllowedCorsOrigins:                flagx.MustGetStringSlice(cmd, flagClientAllowedCORSOrigin),
 		Audience:                          flagx.MustGetStringSlice(cmd, flagClientAudience),
-		BackchannelLogoutSessionRequired:  pointerx.Bool(flagx.MustGetBool(cmd, flagClientBackChannelLogoutSessionRequired)),
-		BackchannelLogoutUri:              pointerx.String(flagx.MustGetString(cmd, flagClientBackchannelLogoutCallback)),
-		ClientName:                        pointerx.String(flagx.MustGetString(cmd, flagClientName)),
-		ClientSecret:                      pointerx.String(flagx.MustGetString(cmd, flagClientSecret)),
-		ClientUri:                         pointerx.String(flagx.MustGetString(cmd, flagClientClientURI)),
+		BackchannelLogoutSessionRequired:  pointerx.Ptr(flagx.MustGetBool(cmd, flagClientBackChannelLogoutSessionRequired)),
+		BackchannelLogoutUri:              pointerx.Ptr(flagx.MustGetString(cmd, flagClientBackchannelLogoutCallback)),
+		ClientName:                        pointerx.Ptr(flagx.MustGetString(cmd, flagClientName)),
+		ClientSecret:                      pointerx.Ptr(flagx.MustGetString(cmd, flagClientSecret)),
+		ClientUri:                         pointerx.Ptr(flagx.MustGetString(cmd, flagClientClientURI)),
 		Contacts:                          flagx.MustGetStringSlice(cmd, flagClientContact),
-		FrontchannelLogoutSessionRequired: pointerx.Bool(flagx.MustGetBool(cmd, flagClientFrontChannelLogoutSessionRequired)),
-		FrontchannelLogoutUri:             pointerx.String(flagx.MustGetString(cmd, flagClientFrontChannelLogoutCallback)),
+		FrontchannelLogoutSessionRequired: pointerx.Ptr(flagx.MustGetBool(cmd, flagClientFrontChannelLogoutSessionRequired)),
+		FrontchannelLogoutUri:             pointerx.Ptr(flagx.MustGetString(cmd, flagClientFrontChannelLogoutCallback)),
 		GrantTypes:                        flagx.MustGetStringSlice(cmd, flagClientGrantType),
-		JwksUri:                           pointerx.String(flagx.MustGetString(cmd, flagClientJWKSURI)),
-		LogoUri:                           pointerx.String(flagx.MustGetString(cmd, flagClientLogoURI)),
+		JwksUri:                           pointerx.Ptr(flagx.MustGetString(cmd, flagClientJWKSURI)),
+		LogoUri:                           pointerx.Ptr(flagx.MustGetString(cmd, flagClientLogoURI)),
 		Metadata:                          json.RawMessage(flagx.MustGetString(cmd, flagClientMetadata)),
-		Owner:                             pointerx.String(flagx.MustGetString(cmd, flagClientOwner)),
-		PolicyUri:                         pointerx.String(flagx.MustGetString(cmd, flagClientPolicyURI)),
+		Owner:                             pointerx.Ptr(flagx.MustGetString(cmd, flagClientOwner)),
+		PolicyUri:                         pointerx.Ptr(flagx.MustGetString(cmd, flagClientPolicyURI)),
 		PostLogoutRedirectUris:            flagx.MustGetStringSlice(cmd, flagClientPostLogoutCallback),
 		RedirectUris:                      flagx.MustGetStringSlice(cmd, flagClientRedirectURI),
-		RequestObjectSigningAlg:           pointerx.String(flagx.MustGetString(cmd, flagClientRequestObjectSigningAlg)),
+		RequestObjectSigningAlg:           pointerx.Ptr(flagx.MustGetString(cmd, flagClientRequestObjectSigningAlg)),
 		RequestUris:                       flagx.MustGetStringSlice(cmd, flagClientRequestURI),
 		ResponseTypes:                     flagx.MustGetStringSlice(cmd, flagClientResponseType),
-		Scope:                             pointerx.String(strings.Join(flagx.MustGetStringSlice(cmd, flagClientScope), " ")),
-		SkipConsent:                       pointerx.Bool(flagx.MustGetBool(cmd, flagClientSkipConsent)),
-		SkipLogoutConsent:                 pointerx.Bool(flagx.MustGetBool(cmd, flagClientLogoutSkipConsent)),
-		SectorIdentifierUri:               pointerx.String(flagx.MustGetString(cmd, flagClientSectorIdentifierURI)),
-		SubjectType:                       pointerx.String(flagx.MustGetString(cmd, flagClientSubjectType)),
-		TokenEndpointAuthMethod:           pointerx.String(flagx.MustGetString(cmd, flagClientTokenEndpointAuthMethod)),
-		TosUri:                            pointerx.String(flagx.MustGetString(cmd, flagClientTOSURI)),
-	}
+		Scope:                             pointerx.Ptr(strings.Join(flagx.MustGetStringSlice(cmd, flagClientScope), " ")),
+		SkipConsent:                       pointerx.Ptr(flagx.MustGetBool(cmd, flagClientSkipConsent)),
+		SkipLogoutConsent:                 pointerx.Ptr(flagx.MustGetBool(cmd, flagClientLogoutSkipConsent)),
+		SectorIdentifierUri:               pointerx.Ptr(flagx.MustGetString(cmd, flagClientSectorIdentifierURI)),
+		SubjectType:                       pointerx.Ptr(flagx.MustGetString(cmd, flagClientSubjectType)),
+		TokenEndpointAuthMethod:           pointerx.Ptr(flagx.MustGetString(cmd, flagClientTokenEndpointAuthMethod)),
+		TosUri:                            pointerx.Ptr(flagx.MustGetString(cmd, flagClientTOSURI)),
+	}, nil
 }
 
 func registerEncryptFlags(flags *pflag.FlagSet) {
@@ -57,6 +77,8 @@ func registerEncryptFlags(flags *pflag.FlagSet) {
 }
 
 func registerClientFlags(flags *pflag.FlagSet) {
+	flags.String(flagFile, "", "Read a JSON file representing a client from this location. If set, the other client flags are ignored.")
+
 	flags.String(flagClientMetadata, "{}", "Metadata is an arbitrary JSON String of your choosing.")
 	flags.String(flagClientOwner, "", "The owner of this client, typically email addresses or a user ID.")
 	flags.StringSlice(flagClientContact, nil, "A list representing ways to contact people responsible for this client, typically email addresses.")
@@ -81,6 +103,7 @@ func registerClientFlags(flags *pflag.FlagSet) {
 	flags.StringSlice(flagClientPostLogoutCallback, []string{}, "List of allowed URLs to be redirected to after a logout.")
 	flags.Bool(flagClientSkipConsent, false, "Boolean flag specifying whether to skip the consent screen for this client. If omitted, the default value is false.")
 	flags.Bool(flagClientLogoutSkipConsent, false, "Boolean flag specifying whether to skip the logout consent screen for this client. If omitted, the default value is false.")
+	flags.String(flagClientAccessTokenStrategy, "", "The strategy used to generate access tokens. Valid options are `opaque` and `jwt`.")
 
 	// back-channel logout options
 	flags.Bool(flagClientBackChannelLogoutSessionRequired, false, "Boolean flag specifying whether the client requires that a sid (session ID) Claim be included in the Logout Token to identify the client session with the OP when the backchannel-logout-callback is used. If omitted, the default value is false.")
