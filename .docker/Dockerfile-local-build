@@ -19,7 +19,7 @@ RUN go build -ldflags="-extldflags=-static" -tags sqlite,sqlite_omit_load_extens
 
 #########################
 
-FROM gcr.io/distroless/static-debian12:debug-nonroot AS runner
+FROM gcr.io/distroless/base-nossl-debian12:nonroot AS runner
 
 COPY --from=builder /usr/bin/hydra /usr/bin/hydra
 COPY --from=builder --chown=nonroot:nonroot /bin/sh /bin/sh
