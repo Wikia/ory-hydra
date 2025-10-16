@@ -9,7 +9,6 @@
 # endpoint can only be used if you follow the steps in the tutorial.      #
 #                                                                         #
 ###########################################################################
-version: "3.7"
 services:
   hydra-migrate:
     environment:
@@ -18,7 +17,7 @@ services:
     environment:
       - DSN=mysql://root:secret@tcp(mysqld:3306)/mysql?max_conns=20&max_idle_conns=4
   mysqld:
-    image: mysql:8.0.26
+    image: mysql:8.0
     ports:
       - "3306:3306"
     environment:

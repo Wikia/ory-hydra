@@ -10,6 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ory/hydra/v2/internal/testhelpers"
+
+	"github.com/ory/fosite/handler/openid"
+
 	"github.com/stretchr/testify/assert"
 
 	"github.com/ory/hydra/v2/persistence"
@@ -27,7 +31,6 @@ import (
 	"github.com/ory/hydra/v2/consent"
 	"github.com/ory/hydra/v2/driver"
 	"github.com/ory/hydra/v2/flow"
-	"github.com/ory/hydra/v2/internal"
 	"github.com/ory/hydra/v2/jwk"
 	"github.com/ory/hydra/v2/oauth2"
 	"github.com/ory/hydra/v2/oauth2/trust"
@@ -55,11 +58,11 @@ var _ interface {
 
 func (s *PersisterTestSuite) SetupSuite() {
 	s.registries = map[string]driver.Registry{
-		"memory": internal.NewRegistrySQLFromURL(s.T(), dbal.NewSQLiteTestDatabase(s.T()), true, &contextx.Default{}),
+		"memory": testhelpers.NewRegistrySQLFromURL(s.T(), dbal.NewSQLiteTestDatabase(s.T()), true, &contextx.Default{}),
 	}
 
 	if !testing.Short() {
-		s.registries["postgres"], s.registries["mysql"], s.registries["cockroach"], _ = internal.ConnectDatabases(s.T(), true, &contextx.Default{})
+		s.registries["postgres"], s.registries["mysql"], s.registries["cockroach"], _ = testhelpers.ConnectDatabases(s.T(), true, &contextx.Default{})
 	}
 
 	s.t1NID, s.t2NID = uuid.Must(uuid.NewV4()), uuid.Must(uuid.NewV4())
@@ -323,9 +326,10 @@ func (s *PersisterTestSuite) TestCreateAccessTokenSession() {
 			fr := fosite.NewRequest()
 
 			fr.Client = &fosite.DefaultClient{ID: c1.ID}
+			fr.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 			require.NoError(t, r.Persister().CreateAccessTokenSession(s.t1, sig, fr))
 			actual := persistencesql.OAuth2RequestSQL{Table: "access"}
-			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, persistencesql.SignatureHash(sig)))
+			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, x.SignatureHash(sig)))
 			require.Equal(t, s.t1NID, actual.NID)
 		})
 	}
@@ -342,6 +346,7 @@ func (s *PersisterTestSuite) TestCreateAuthorizeCodeSession() {
 			sig := uuid.Must(uuid.NewV4()).String()
 			fr := fosite.NewRequest()
 			fr.Client = &fosite.DefaultClient{ID: c1.ID}
+			fr.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 			require.NoError(t, r.Persister().CreateAuthorizeCodeSession(s.t1, sig, fr))
 			actual := persistencesql.OAuth2RequestSQL{Table: "code"}
 			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, sig))
@@ -481,6 +486,7 @@ func (s *PersisterTestSuite) TestCreateOpenIDConnectSession() {
 
 			request := fosite.NewRequest()
 			request.Client = &fosite.DefaultClient{ID: "client-id"}
+			request.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 
 			authorizeCode := uuid.Must(uuid.NewV4()).String()
 			require.NoError(t, r.Persister().CreateOpenIDConnectSession(s.t1, authorizeCode, request))
@@ -501,6 +507,7 @@ func (s *PersisterTestSuite) TestCreatePKCERequestSession() {
 
 			request := fosite.NewRequest()
 			request.Client = &fosite.DefaultClient{ID: "client-id"}
+			request.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 
 			authorizeCode := uuid.Must(uuid.NewV4()).String()
 
@@ -522,11 +529,12 @@ func (s *PersisterTestSuite) TestCreateRefreshTokenSession() {
 
 			request := fosite.NewRequest()
 			request.Client = &fosite.DefaultClient{ID: "client-id"}
+			request.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 
 			authorizeCode := uuid.Must(uuid.NewV4()).String()
 			actual := persistencesql.OAuth2RequestSQL{Table: "refresh"}
 			require.Error(t, r.Persister().Connection(context.Background()).Find(&actual, authorizeCode))
-			require.NoError(t, r.Persister().CreateRefreshTokenSession(s.t1, authorizeCode, request))
+			require.NoError(t, r.Persister().CreateRefreshTokenSession(s.t1, authorizeCode, "", request))
 			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, authorizeCode))
 			require.Equal(t, s.t1NID, actual.NID)
 		})
@@ -560,15 +568,16 @@ func (s *PersisterTestSuite) DeleteAccessTokenSession() {
 			sig := uuid.Must(uuid.NewV4()).String()
 			fr := fosite.NewRequest()
 			fr.Client = &fosite.DefaultClient{ID: client.ID}
+			fr.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 			require.NoError(t, r.Persister().CreateAccessTokenSession(s.t1, sig, fr))
 			require.NoError(t, r.Persister().DeleteAccessTokenSession(s.t2, sig))
 
 			actual := persistencesql.OAuth2RequestSQL{Table: "access"}
-			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, persistencesql.SignatureHash(sig)))
+			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, x.SignatureHash(sig)))
 			require.Equal(t, s.t1NID, actual.NID)
 
 			require.NoError(t, r.Persister().DeleteAccessTokenSession(s.t1, sig))
-			require.Error(t, r.Persister().Connection(context.Background()).Find(&actual, persistencesql.SignatureHash(sig)))
+			require.Error(t, r.Persister().Connection(context.Background()).Find(&actual, x.SignatureHash(sig)))
 		})
 	}
 }
@@ -582,15 +591,16 @@ func (s *PersisterTestSuite) TestDeleteAccessTokens() {
 			sig := uuid.Must(uuid.NewV4()).String()
 			fr := fosite.NewRequest()
 			fr.Client = &fosite.DefaultClient{ID: client.ID}
+			fr.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 			require.NoError(t, r.Persister().CreateAccessTokenSession(s.t1, sig, fr))
 			require.NoError(t, r.Persister().DeleteAccessTokens(s.t2, client.ID))
 
 			actual := persistencesql.OAuth2RequestSQL{Table: "access"}
-			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, persistencesql.SignatureHash(sig)))
+			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, x.SignatureHash(sig)))
 			require.Equal(t, s.t1NID, actual.NID)
 
 			require.NoError(t, r.Persister().DeleteAccessTokens(s.t1, client.ID))
-			require.Error(t, r.Persister().Connection(context.Background()).Find(&actual, persistencesql.SignatureHash(sig)))
+			require.Error(t, r.Persister().Connection(context.Background()).Find(&actual, x.SignatureHash(sig)))
 		})
 	}
 }
@@ -667,6 +677,7 @@ func (s *PersisterTestSuite) TestDeleteOpenIDConnectSession() {
 
 			request := fosite.NewRequest()
 			request.Client = &fosite.DefaultClient{ID: "client-id"}
+			request.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 
 			authorizeCode := uuid.Must(uuid.NewV4()).String()
 			require.NoError(t, r.Persister().CreateOpenIDConnectSession(s.t1, authorizeCode, request))
@@ -690,9 +701,10 @@ func (s *PersisterTestSuite) TestDeletePKCERequestSession() {
 
 			request := fosite.NewRequest()
 			request.Client = &fosite.DefaultClient{ID: "client-id"}
+			request.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 
 			authorizeCode := uuid.Must(uuid.NewV4()).String()
-			r.Persister().CreatePKCERequestSession(s.t1, authorizeCode, request)
+			require.NoError(t, r.Persister().CreatePKCERequestSession(s.t1, authorizeCode, request))
 
 			actual := persistencesql.OAuth2RequestSQL{Table: "pkce"}
 
@@ -713,9 +725,10 @@ func (s *PersisterTestSuite) TestDeleteRefreshTokenSession() {
 
 			request := fosite.NewRequest()
 			request.Client = &fosite.DefaultClient{ID: "client-id"}
+			request.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 
 			signature := uuid.Must(uuid.NewV4()).String()
-			require.NoError(t, r.Persister().CreateRefreshTokenSession(s.t1, signature, request))
+			require.NoError(t, r.Persister().CreateRefreshTokenSession(s.t1, signature, "", request))
 
 			actual := persistencesql.OAuth2RequestSQL{Table: "refresh"}
 
@@ -833,14 +846,15 @@ func (s *PersisterTestSuite) TestFlushInactiveAccessTokens() {
 			fr := fosite.NewRequest()
 			fr.RequestedAt = time.Now().UTC().Add(-24 * time.Hour)
 			fr.Client = &fosite.DefaultClient{ID: client.ID}
+			fr.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 			require.NoError(t, r.Persister().CreateAccessTokenSession(s.t1, sig, fr))
 
 			actual := persistencesql.OAuth2RequestSQL{Table: "access"}
 
 			require.NoError(t, r.Persister().FlushInactiveAccessTokens(s.t2, time.Now().Add(time.Hour), 100, 100))
-			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, persistencesql.SignatureHash(sig)))
+			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, x.SignatureHash(sig)))
 			require.NoError(t, r.Persister().FlushInactiveAccessTokens(s.t1, time.Now().Add(time.Hour), 100, 100))
-			require.Error(t, r.Persister().Connection(context.Background()).Find(&actual, persistencesql.SignatureHash(sig)))
+			require.Error(t, r.Persister().Connection(context.Background()).Find(&actual, x.SignatureHash(sig)))
 		})
 	}
 }
@@ -916,10 +930,11 @@ func (s *PersisterTestSuite) TestFlushInactiveRefreshTokens() {
 			request := fosite.NewRequest()
 			request.RequestedAt = time.Now().Add(-240 * 365 * time.Hour)
 			request.Client = &fosite.DefaultClient{ID: "client-id"}
+			request.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 			signature := uuid.Must(uuid.NewV4()).String()
 
 			require.NoError(t, r.Persister().CreateClient(s.t1, client))
-			require.NoError(t, r.Persister().CreateRefreshTokenSession(s.t1, signature, request))
+			require.NoError(t, r.Persister().CreateRefreshTokenSession(s.t1, signature, "", request))
 
 			actual := persistencesql.OAuth2RequestSQL{Table: "refresh"}
 
@@ -940,6 +955,7 @@ func (s *PersisterTestSuite) TestGetAccessTokenSession() {
 			sig := uuid.Must(uuid.NewV4()).String()
 			fr := fosite.NewRequest()
 			fr.Client = &fosite.DefaultClient{ID: client.ID}
+			fr.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 			require.NoError(t, r.Persister().CreateAccessTokenSession(s.t1, sig, fr))
 
 			actual, err := r.Persister().GetAccessTokenSession(s.t2, sig, &fosite.DefaultSession{})
@@ -961,6 +977,7 @@ func (s *PersisterTestSuite) TestGetAuthorizeCodeSession() {
 			sig := uuid.Must(uuid.NewV4()).String()
 			fr := fosite.NewRequest()
 			fr.Client = &fosite.DefaultClient{ID: client.ID}
+			fr.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 			require.NoError(t, r.Persister().CreateAuthorizeCodeSession(s.t1, sig, fr))
 
 			actual, err := r.Persister().GetAuthorizeCodeSession(s.t2, sig, &fosite.DefaultSession{})
@@ -1250,6 +1267,7 @@ func (s *PersisterTestSuite) TestGetOpenIDConnectSession() {
 			request := fosite.NewRequest()
 			request.SetID("request-id")
 			request.Client = &fosite.DefaultClient{ID: "client-id"}
+			request.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 			authorizeCode := uuid.Must(uuid.NewV4()).String()
 			require.NoError(t, r.Persister().CreateClient(s.t1, client))
 			require.NoError(t, r.Persister().CreateOpenIDConnectSession(s.t1, authorizeCode, request))
@@ -1273,6 +1291,7 @@ func (s *PersisterTestSuite) TestGetPKCERequestSession() {
 			request := fosite.NewRequest()
 			request.SetID("request-id")
 			request.Client = &fosite.DefaultClient{ID: "client-id"}
+			request.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 			sig := uuid.Must(uuid.NewV4()).String()
 			require.NoError(t, r.Persister().CreateClient(s.t1, client))
 			require.NoError(t, r.Persister().CreatePKCERequestSession(s.t1, sig, request))
@@ -1341,13 +1360,15 @@ func (s *PersisterTestSuite) TestGetPublicKeys() {
 	t := s.T()
 	for k, r := range s.registries {
 		t.Run(k, func(t *testing.T) {
-			ks := newKeySet("ks-id", "use")
+			const issuer = "ks-id"
+			ks := newKeySet(issuer, "use")
 			grant := trust.Grant{
 				ID:        uuid.Must(uuid.NewV4()).String(),
 				ExpiresAt: time.Now().Add(time.Hour),
-				PublicKey: trust.PublicKey{Set: "ks-id", KeyID: ks.Keys[0].KeyID},
+				Issuer:    issuer,
+				PublicKey: trust.PublicKey{Set: issuer, KeyID: ks.Keys[0].KeyID},
 			}
-			require.NoError(t, r.Persister().AddKeySet(s.t1, "ks-id", ks))
+			require.NoError(t, r.Persister().AddKeySet(s.t1, issuer, ks))
 			require.NoError(t, r.Persister().CreateGrant(s.t1, grant, ks.Keys[0]))
 
 			actual, err := r.Persister().GetPublicKeys(s.t2, grant.Issuer, grant.Subject)
@@ -1369,9 +1390,10 @@ func (s *PersisterTestSuite) TestGetRefreshTokenSession() {
 			request := fosite.NewRequest()
 			request.SetID("request-id")
 			request.Client = &fosite.DefaultClient{ID: "client-id"}
+			request.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 			sig := uuid.Must(uuid.NewV4()).String()
 			require.NoError(t, r.Persister().CreateClient(s.t1, client))
-			require.NoError(t, r.Persister().CreateRefreshTokenSession(s.t1, sig, request))
+			require.NoError(t, r.Persister().CreateRefreshTokenSession(s.t1, sig, "", request))
 
 			actual, err := r.Persister().GetRefreshTokenSession(s.t2, sig, &fosite.DefaultSession{})
 			require.Error(t, err)
@@ -1456,6 +1478,7 @@ func (s *PersisterTestSuite) TestInvalidateAuthorizeCodeSession() {
 			sig := uuid.Must(uuid.NewV4()).String()
 			fr := fosite.NewRequest()
 			fr.Client = &fosite.DefaultClient{ID: cl.ID}
+			fr.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 			require.NoError(t, r.Persister().CreateAuthorizeCodeSession(s.t1, sig, fr))
 
 			require.NoError(t, r.Persister().InvalidateAuthorizeCodeSession(s.t2, sig))
@@ -1729,15 +1752,16 @@ func (s *PersisterTestSuite) TestRevokeAccessToken() {
 			sig := uuid.Must(uuid.NewV4()).String()
 			fr := fosite.NewRequest()
 			fr.Client = &fosite.DefaultClient{ID: client.ID}
+			fr.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 			require.NoError(t, r.Persister().CreateAccessTokenSession(s.t1, sig, fr))
 			require.NoError(t, r.Persister().RevokeAccessToken(s.t2, fr.ID))
 
 			actual := persistencesql.OAuth2RequestSQL{Table: "access"}
-			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, persistencesql.SignatureHash(sig)))
+			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, x.SignatureHash(sig)))
 			require.Equal(t, s.t1NID, actual.NID)
 
 			require.NoError(t, r.Persister().RevokeAccessToken(s.t1, fr.ID))
-			require.Error(t, r.Persister().Connection(context.Background()).Find(&actual, persistencesql.SignatureHash(sig)))
+			require.Error(t, r.Persister().Connection(context.Background()).Find(&actual, x.SignatureHash(sig)))
 		})
 	}
 }
@@ -1751,48 +1775,117 @@ func (s *PersisterTestSuite) TestRevokeRefreshToken() {
 
 			request := fosite.NewRequest()
 			request.Client = &fosite.DefaultClient{ID: "client-id"}
+			request.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 
 			signature := uuid.Must(uuid.NewV4()).String()
-			require.NoError(t, r.Persister().CreateRefreshTokenSession(s.t1, signature, request))
+			require.NoError(t, r.Persister().CreateRefreshTokenSession(s.t1, signature, "", request))
 
-			actual := persistencesql.OAuth2RequestSQL{Table: "refresh"}
-
+			var actualt2 persistencesql.OAuth2RefreshTable
 			require.NoError(t, r.Persister().RevokeRefreshToken(s.t2, request.ID))
-			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, signature))
-			require.Equal(t, true, actual.Active)
+			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actualt2, signature))
+			require.Equal(t, true, actualt2.Active)
+
 			require.NoError(t, r.Persister().RevokeRefreshToken(s.t1, request.ID))
-			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, signature))
-			require.Equal(t, false, actual.Active)
+			require.ErrorIs(t, r.Persister().Connection(context.Background()).Find(new(persistencesql.OAuth2RefreshTable), signature), sql.ErrNoRows)
 		})
 	}
 }
 
-func (s *PersisterTestSuite) TestRevokeRefreshTokenMaybeGracePeriod() {
+func (s *PersisterTestSuite) TestRotateRefreshToken() {
 	t := s.T()
 	for k, r := range s.registries {
 		t.Run(k, func(t *testing.T) {
-			client := &client.Client{ID: "client-id"}
-			require.NoError(t, r.Persister().CreateClient(s.t1, client))
+			t.Run("with access signature", func(t *testing.T) {
+				clientID := uuid.Must(uuid.NewV4()).String()
+				require.NoError(t, r.Persister().CreateClient(s.t1, &client.Client{ID: clientID}))
+				require.NoError(t, r.Persister().CreateClient(s.t2, &client.Client{ID: clientID}))
 
-			request := fosite.NewRequest()
-			request.Client = &fosite.DefaultClient{ID: "client-id"}
+				request := fosite.NewRequest()
+				request.Client = &fosite.DefaultClient{ID: clientID}
+				request.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
 
-			signature := uuid.Must(uuid.NewV4()).String()
-			require.NoError(t, r.Persister().CreateRefreshTokenSession(s.t1, signature, request))
+				// Create token T1
+				signatureT1 := uuid.Must(uuid.NewV4()).String()
+				accessSignatureT1 := uuid.Must(uuid.NewV4()).String()
+				require.NoError(t, r.Persister().CreateAccessTokenSession(s.t1, accessSignatureT1, request))
+				require.NoError(t, r.Persister().CreateRefreshTokenSession(s.t1, signatureT1, accessSignatureT1, request))
 
-			actual := persistencesql.OAuth2RequestSQL{Table: "refresh"}
+				// Create token T2
+				signatureT2 := uuid.Must(uuid.NewV4()).String()
+				accessSignatureT2 := uuid.Must(uuid.NewV4()).String()
+				require.ErrorIs(t, r.Persister().RotateRefreshToken(s.t2, request.ID, signatureT2), fosite.ErrNotFound, "Rotation fails as token is non-existent.")
+				require.NoError(t, r.Persister().CreateAccessTokenSession(s.t2, accessSignatureT2, request))
+				require.NoError(t, r.Persister().CreateRefreshTokenSession(s.t2, signatureT2, accessSignatureT2, request))
 
-			store, ok := r.Persister().(*persistencesql.Persister)
-			if !ok {
-				t.Fatal("type assertion failed")
-			}
+				accessT2 := persistencesql.OAuth2RequestSQL{Table: "access"}
+				assert.NoError(t, r.Persister().Connection(s.t2).Where("signature = ?", x.SignatureHash(accessSignatureT2)).First(&accessT2))
+				require.Equal(t, true, accessT2.Active)
 
-			require.NoError(t, store.RevokeRefreshTokenMaybeGracePeriod(s.t2, request.ID, signature))
-			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, signature))
-			require.Equal(t, true, actual.Active)
-			require.NoError(t, store.RevokeRefreshTokenMaybeGracePeriod(s.t1, request.ID, signature))
-			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, signature))
-			require.Equal(t, false, actual.Active)
+				accessT1 := persistencesql.OAuth2RequestSQL{Table: "access"}
+				assert.NoError(t, r.Persister().Connection(s.t1).Where("signature = ?", x.SignatureHash(accessSignatureT1)).First(&accessT1))
+				require.Equal(t, true, accessT2.Active)
+
+				// Rotate token T1
+				require.NoError(t, r.Persister().RotateRefreshToken(s.t1, request.ID, signatureT1))
+				{
+					refreshT1 := persistencesql.OAuth2RequestSQL{Table: "refresh"}
+					require.NoError(t, r.Persister().Connection(s.t1).Where("signature = ?", signatureT1).First(&refreshT1))
+					require.Equal(t, false, refreshT1.Active)
+
+					accessT1 := persistencesql.OAuth2RequestSQL{Table: "access"}
+					require.ErrorIs(t, r.Persister().Connection(s.t1).Where("signature = ?", x.SignatureHash(accessSignatureT1)).First(&accessT1), sql.ErrNoRows)
+
+					refreshT2 := persistencesql.OAuth2RequestSQL{Table: "refresh"}
+					require.NoError(t, r.Persister().Connection(s.t2).Where("signature = ?", signatureT2).First(&refreshT2))
+					require.Equal(t, true, refreshT2.Active)
+
+					accessT2 := persistencesql.OAuth2RequestSQL{Table: "access"}
+					require.NoError(t, r.Persister().Connection(s.t2).Where("signature = ?", x.SignatureHash(accessSignatureT2)).First(&accessT2))
+					require.Equal(t, true, accessT2.Active)
+				}
+
+				require.NoError(t, r.Persister().RotateRefreshToken(s.t2, request.ID, signatureT2))
+				{
+					refreshT2 := persistencesql.OAuth2RequestSQL{Table: "refresh"}
+					require.NoError(t, r.Persister().Connection(s.t2).Where("signature = ?", signatureT2).First(&refreshT2))
+					require.Equal(t, false, refreshT2.Active)
+
+					accessT2 := persistencesql.OAuth2RequestSQL{Table: "access"}
+					require.ErrorIs(t, r.Persister().Connection(s.t2).Where("signature = ?", x.SignatureHash(accessSignatureT2)).First(&accessT2), sql.ErrNoRows)
+					require.Equal(t, false, accessT2.Active)
+				}
+			})
+
+			t.Run("without access signature", func(t *testing.T) {
+				clientID := uuid.Must(uuid.NewV4()).String()
+				require.NoError(t, r.Persister().CreateClient(s.t1, &client.Client{ID: clientID}))
+
+				request1 := fosite.NewRequest()
+				request1.Client = &fosite.DefaultClient{ID: clientID}
+				request1.Session = &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "sub"}}
+
+				signature := uuid.Must(uuid.NewV4()).String()
+				require.NoError(t, r.Persister().CreateRefreshTokenSession(s.t1, signature, "", request1))
+
+				accessSignature1 := uuid.Must(uuid.NewV4()).String()
+				require.NoError(t, r.Persister().CreateAccessTokenSession(s.t1, accessSignature1, request1))
+
+				accessSignature2 := uuid.Must(uuid.NewV4()).String()
+				require.NoError(t, r.Persister().CreateAccessTokenSession(s.t1, accessSignature2, request1))
+
+				require.NoError(t, r.Persister().RotateRefreshToken(s.t1, request1.ID, signature))
+				{
+					accessT1 := persistencesql.OAuth2RequestSQL{Table: "access"}
+					require.ErrorIs(t, r.Persister().Connection(s.t1).Where("signature = ?", x.SignatureHash(accessSignature1)).First(&accessT1), sql.ErrNoRows)
+
+					refresh := persistencesql.OAuth2RequestSQL{Table: "refresh"}
+					require.NoError(t, r.Persister().Connection(s.t1).Where("signature = ?", signature).First(&refresh))
+					require.Equal(t, false, refresh.Active)
+
+					accessT2 := persistencesql.OAuth2RequestSQL{Table: "access"}
+					require.ErrorIs(t, r.Persister().Connection(s.t1).Where("signature = ?", x.SignatureHash(accessSignature2)).First(&accessT2), sql.ErrNoRows)
+				}
+			})
 		})
 	}
 }
@@ -1811,7 +1904,7 @@ func (s *PersisterTestSuite) TestRevokeSubjectClientConsentSession() {
 
 			actual := flow.Flow{}
 
-			require.Error(t, r.Persister().RevokeSubjectClientConsentSession(s.t2, "sub", client.ID))
+			require.NoError(t, r.Persister().RevokeSubjectClientConsentSession(s.t2, "sub", client.ID), "should not error if nothing was found")
 			require.NoError(t, r.Persister().Connection(context.Background()).Find(&actual, f.ID))
 			require.NoError(t, r.Persister().RevokeSubjectClientConsentSession(s.t1, "sub", client.ID))
 			require.Error(t, r.Persister().Connection(context.Background()).Find(&actual, f.ID))
@@ -2046,27 +2139,54 @@ func (s *PersisterTestSuite) TestVerifyAndInvalidateLogoutRequest() {
 	t := s.T()
 	for k, r := range s.registries {
 		t.Run(k, func(t *testing.T) {
-			lr := newLogoutRequest()
-			lr.Verifier = uuid.Must(uuid.NewV4()).String()
-			lr.Accepted = true
-			lr.Rejected = false
-			require.NoError(t, r.ConsentManager().CreateLogoutRequest(s.t1, lr))
+			run := func(t *testing.T, lr *flow.LogoutRequest) {
+				lr.Verifier = uuid.Must(uuid.NewV4()).String()
+				lr.Accepted = true
+				lr.Rejected = false
+				require.NoError(t, r.ConsentManager().CreateLogoutRequest(s.t1, lr))
 
-			expected, err := r.ConsentManager().GetLogoutRequest(s.t1, lr.ID)
-			require.NoError(t, err)
+				expected, err := r.ConsentManager().GetLogoutRequest(s.t1, lr.ID)
+				require.NoError(t, err)
 
-			lrInvalidated, err := r.ConsentManager().VerifyAndInvalidateLogoutRequest(s.t2, lr.Verifier)
-			require.Error(t, err)
-			require.Nil(t, lrInvalidated)
-			actual := &flow.LogoutRequest{}
-			require.NoError(t, r.Persister().Connection(context.Background()).Find(actual, lr.ID))
-			require.Equal(t, expected, actual)
+				lrInvalidated, err := r.ConsentManager().VerifyAndInvalidateLogoutRequest(s.t2, lr.Verifier)
+				require.Error(t, err)
+				require.Nil(t, lrInvalidated)
+				actual := &flow.LogoutRequest{}
+				require.NoError(t, r.Persister().Connection(context.Background()).Find(actual, lr.ID))
+				require.Equal(t, expected, actual)
 
-			lrInvalidated, err = r.ConsentManager().VerifyAndInvalidateLogoutRequest(s.t1, lr.Verifier)
-			require.NoError(t, err)
-			require.NoError(t, r.Persister().Connection(context.Background()).Find(actual, lr.ID))
-			require.Equal(t, lrInvalidated, actual)
-			require.Equal(t, true, actual.WasHandled)
+				lrInvalidated, err = r.ConsentManager().VerifyAndInvalidateLogoutRequest(s.t1, lr.Verifier)
+				require.NoError(t, err)
+				require.NoError(t, r.Persister().Connection(context.Background()).Find(actual, lr.ID))
+				require.Equal(t, lrInvalidated, actual)
+				require.Equal(t, true, actual.WasHandled)
+			}
+
+			t.Run("case=legacy logout request without expiry", func(t *testing.T) {
+				lr := newLogoutRequest()
+				run(t, lr)
+			})
+
+			t.Run("case=logout request with expiry", func(t *testing.T) {
+				lr := newLogoutRequest()
+				lr.ExpiresAt = sqlxx.NullTime(time.Now().Add(time.Hour))
+				run(t, lr)
+			})
+
+			t.Run("case=logout request that expired returns error", func(t *testing.T) {
+				lr := newLogoutRequest()
+				lr.ExpiresAt = sqlxx.NullTime(time.Now().Add(-time.Hour))
+				lr.Verifier = uuid.Must(uuid.NewV4()).String()
+				lr.Accepted = true
+				lr.Rejected = false
+				require.NoError(t, r.ConsentManager().CreateLogoutRequest(s.t1, lr))
+
+				_, err := r.ConsentManager().VerifyAndInvalidateLogoutRequest(s.t2, lr.Verifier)
+				require.ErrorIs(t, err, x.ErrNotFound)
+
+				_, err = r.ConsentManager().VerifyAndInvalidateLogoutRequest(s.t1, lr.Verifier)
+				require.ErrorIs(t, err, flow.ErrorLogoutFlowExpired)
+			})
 		})
 	}
 }

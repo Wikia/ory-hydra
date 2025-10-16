@@ -19,12 +19,12 @@ import (
 	"net/url"
 )
 
-// WellknownApiService WellknownApi service
-type WellknownApiService service
+// WellknownAPIService WellknownAPI service
+type WellknownAPIService service
 
 type ApiDiscoverJsonWebKeysRequest struct {
 	ctx        context.Context
-	ApiService *WellknownApiService
+	ApiService *WellknownAPIService
 }
 
 func (r ApiDiscoverJsonWebKeysRequest) Execute() (*JsonWebKeySet, *http.Response, error) {
@@ -38,10 +38,13 @@ This endpoint returns JSON Web Keys required to verifying OpenID Connect ID Toke
 if enabled, OAuth 2.0 JWT Access Tokens. This endpoint can be used with client libraries like
 [node-jwks-rsa](https://github.com/auth0/node-jwks-rsa) among others.
 
+Adding custom keys requires first creating a keyset via the createJsonWebKeySet operation,
+and then configuring the webfinger.jwks.broadcast_keys configuration value to include the keyset name.
+
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@return ApiDiscoverJsonWebKeysRequest
 */
-func (a *WellknownApiService) DiscoverJsonWebKeys(ctx context.Context) ApiDiscoverJsonWebKeysRequest {
+func (a *WellknownAPIService) DiscoverJsonWebKeys(ctx context.Context) ApiDiscoverJsonWebKeysRequest {
 	return ApiDiscoverJsonWebKeysRequest{
 		ApiService: a,
 		ctx:        ctx,
@@ -51,7 +54,7 @@ func (a *WellknownApiService) DiscoverJsonWebKeys(ctx context.Context) ApiDiscov
 // Execute executes the request
 //
 //	@return JsonWebKeySet
-func (a *WellknownApiService) DiscoverJsonWebKeysExecute(r ApiDiscoverJsonWebKeysRequest) (*JsonWebKeySet, *http.Response, error) {
+func (a *WellknownAPIService) DiscoverJsonWebKeysExecute(r ApiDiscoverJsonWebKeysRequest) (*JsonWebKeySet, *http.Response, error) {
 	var (
 		localVarHTTPMethod  = http.MethodGet
 		localVarPostBody    interface{}
@@ -59,7 +62,7 @@ func (a *WellknownApiService) DiscoverJsonWebKeysExecute(r ApiDiscoverJsonWebKey
 		localVarReturnValue *JsonWebKeySet
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "WellknownApiService.DiscoverJsonWebKeys")
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "WellknownAPIService.DiscoverJsonWebKeys")
 	if err != nil {
 		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}

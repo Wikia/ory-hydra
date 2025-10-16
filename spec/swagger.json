@@ -20,7 +20,7 @@
   "paths": {
     "/.well-known/jwks.json": {
       "get": {
-        "description": "This endpoint returns JSON Web Keys required to verifying OpenID Connect ID Tokens and,\nif enabled, OAuth 2.0 JWT Access Tokens. This endpoint can be used with client libraries like\n[node-jwks-rsa](https://github.com/auth0/node-jwks-rsa) among others.",
+        "description": "This endpoint returns JSON Web Keys required to verifying OpenID Connect ID Tokens and,\nif enabled, OAuth 2.0 JWT Access Tokens. This endpoint can be used with client libraries like\n[node-jwks-rsa](https://github.com/auth0/node-jwks-rsa) among others.\n\nAdding custom keys requires first creating a keyset via the createJsonWebKeySet operation,\nand then configuring the webfinger.jwks.broadcast_keys configuration value to include the keyset name.",
         "consumes": [
           "application/json"
         ],
@@ -1280,7 +1280,7 @@
     },
     "/admin/oauth2/auth/sessions/login": {
       "delete": {
-        "description": "This endpoint invalidates authentication sessions. After revoking the authentication session(s), the subject\nhas to re-authenticate at the Ory OAuth2 Provider. This endpoint does not invalidate any tokens.\n\nIf you send the subject in a query param, all authentication sessions that belong to that subject are revoked.\nNo OpenID Connect Front- or Back-channel logout is performed in this case.\n\nAlternatively, you can send a SessionID via `sid` query param, in which case, only the session that is connected\nto that SessionID is revoked. OpenID Connect Back-channel logout is performed in this case.",
+        "description": "This endpoint invalidates authentication sessions. After revoking the authentication session(s), the subject\nhas to re-authenticate at the Ory OAuth2 Provider. This endpoint does not invalidate any tokens.\n\nIf you send the subject in a query param, all authentication sessions that belong to that subject are revoked.\nNo OpenID Connect Front- or Back-channel logout is performed in this case.\n\nAlternatively, you can send a SessionID via `sid` query param, in which case, only the session that is connected\nto that SessionID is revoked. OpenID Connect Back-channel logout is performed in this case.\n\nWhen using Ory for the identity provider, the login provider will also invalidate the session cookie.",
         "consumes": [
           "application/json"
         ],
@@ -1305,7 +1305,7 @@
           },
           {
             "type": "string",
-            "description": "OAuth 2.0 Subject\n\nThe subject to revoke authentication sessions for.",
+            "description": "Login Session ID\n\nThe login session to revoke.",
             "name": "sid",
             "in": "query"
           }
@@ -1687,7 +1687,7 @@
     },
     "/oauth2/auth": {
       "get": {
-        "description": "Use open source libraries to perform OAuth 2.0 and OpenID Connect\navailable for any programming language. You can find a list of libraries at https://oauth.net/code/\n\nThe Ory SDK is not yet able to this endpoint properly.",
+        "description": "Use open source libraries to perform OAuth 2.0 and OpenID Connect\navailable for any programming language. You can find a list of libraries at https://oauth.net/code/\n\nThis endpoint should not be used via the Ory SDK and is only included for technical reasons.\nInstead, use one of the libraries linked above.",
         "consumes": [
           "application/x-www-form-urlencoded"
         ],
@@ -1981,7 +1981,7 @@
             "oauth2": []
           }
         ],
-        "description": "Use open source libraries to perform OAuth 2.0 and OpenID Connect\navailable for any programming language. You can find a list of libraries here https://oauth.net/code/\n\nThe Ory SDK is not yet able to this endpoint properly.",
+        "description": "Use open source libraries to perform OAuth 2.0 and OpenID Connect\navailable for any programming language. You can find a list of libraries here https://oauth.net/code/\n\nThis endpoint should not be used via the Ory SDK and is only included for technical reasons.\nInstead, use one of the libraries linked above.",
         "consumes": [
           "application/x-www-form-urlencoded"
         ],
@@ -2393,6 +2393,7 @@
     },
     "healthNotReadyStatus": {
       "type": "object",
+      "title": "The not ready status of the service.",
       "properties": {
         "errors": {
           "description": "Errors contains a list of errors that caused the not ready status.",
@@ -2405,6 +2406,7 @@
     },
     "healthStatus": {
       "type": "object",
+      "title": "The health status of the service.",
       "properties": {
         "status": {
           "description": "Status always contains \"ok\".",
@@ -3030,9 +3032,15 @@
         "client": {
           "$ref": "#/definitions/oAuth2Client"
         },
+        "expires_at": {
+          "$ref": "#/definitions/nullTime"
+        },
         "request_url": {
           "description": "RequestURL is the original Logout URL requested.",
           "type": "string"
+        },
+        "requested_at": {
+          "$ref": "#/definitions/nullTime"
         },
         "rp_initiated": {
           "description": "RPInitiated is set to true if the request was initiated by a Relying Party (RP), also known as an OAuth 2.0 Client.",
@@ -3668,7 +3676,7 @@
   ,"UUID":{"type": "string", "format": "uuid4"}},
   "responses": {
     "emptyResponse": {
-      "description": "Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is\ntypically 201."
+      "description": "Empty responses are sent when, for example, resources are deleted. The HTTP status code for empty responses is\ntypically 204."
     },
     "errorOAuth2BadRequest": {
       "description": "Bad Request Error Response",

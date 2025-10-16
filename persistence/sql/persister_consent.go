@@ -12,37 +12,36 @@ import (
 
 	"github.com/gobuffalo/pop/v6"
 	"github.com/gofrs/uuid"
-
-	"github.com/ory/hydra/v2/oauth2/flowctx"
-	"github.com/ory/x/otelx"
-	"github.com/ory/x/sqlxx"
-
-	"github.com/ory/x/errorsx"
-
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/ory/fosite"
 	"github.com/ory/hydra/v2/client"
 	"github.com/ory/hydra/v2/consent"
 	"github.com/ory/hydra/v2/flow"
+	"github.com/ory/hydra/v2/oauth2/flowctx"
 	"github.com/ory/hydra/v2/x"
+	"github.com/ory/x/errorsx"
+	"github.com/ory/x/otelx"
 	"github.com/ory/x/sqlcon"
+	"github.com/ory/x/sqlxx"
 )
 
 var _ consent.Manager = &Persister{}
 
-func (p *Persister) RevokeSubjectConsentSession(ctx context.Context, user string) error {
+func (p *Persister) RevokeSubjectConsentSession(ctx context.Context, user string) (err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.RevokeSubjectConsentSession")
-	defer span.End()
+	defer otelx.End(span, &err)
 
-	return p.transaction(ctx, p.revokeConsentSession("consent_challenge_id IS NOT NULL AND subject = ?", user))
+	return p.Transaction(ctx, p.revokeConsentSession("consent_challenge_id IS NOT NULL AND subject = ?", user))
 }
 
-func (p *Persister) RevokeSubjectClientConsentSession(ctx context.Context, user, client string) error {
-	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.RevokeSubjectClientConsentSession")
-	defer span.End()
+func (p *Persister) RevokeSubjectClientConsentSession(ctx context.Context, user, client string) (err error) {
+	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.RevokeSubjectClientConsentSession", trace.WithAttributes(attribute.String("client", client)))
+	defer otelx.End(span, &err)
 
-	return p.transaction(ctx, p.revokeConsentSession("consent_challenge_id IS NOT NULL AND subject = ? AND client_id = ?", user, client))
+	return p.Transaction(ctx, p.revokeConsentSession("consent_challenge_id IS NOT NULL AND subject = ? AND client_id = ?", user, client))
 }
 
 func (p *Persister) revokeConsentSession(whereStmt string, whereArgs ...interface{}) func(context.Context, *pop.Connection) error {
@@ -51,54 +50,58 @@ func (p *Persister) revokeConsentSession(whereStmt string, whereArgs ...interfac
 		if err := p.QueryWithNetwork(ctx).
 			Where(whereStmt, whereArgs...).
 			Select("consent_challenge_id").
-			All(&fs); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return errorsx.WithStack(x.ErrNotFound)
-			}
-
+			All(&fs); errors.Is(err, sql.ErrNoRows) {
+			return errorsx.WithStack(x.ErrNotFound)
+		} else if err != nil {
 			return sqlcon.HandleError(err)
 		}
 
-		var count int
+		ids := make([]interface{}, 0, len(fs))
+		nid := p.NetworkID(ctx)
 		for _, f := range fs {
-			if err := p.RevokeAccessToken(ctx, f.ConsentChallengeID.String()); errors.Is(err, fosite.ErrNotFound) {
-				// do nothing
-			} else if err != nil {
-				return err
-			}
-
-			if err := p.RevokeRefreshToken(ctx, f.ConsentChallengeID.String()); errors.Is(err, fosite.ErrNotFound) {
-				// do nothing
-			} else if err != nil {
-				return err
-			}
-
-			localCount, err := c.RawQuery("DELETE FROM hydra_oauth2_flow WHERE consent_challenge_id = ? AND nid = ?", f.ConsentChallengeID, p.NetworkID(ctx)).ExecWithCount()
-			if err != nil {
-				if errors.Is(err, sql.ErrNoRows) {
-					return errorsx.WithStack(x.ErrNotFound)
-				}
-				return sqlcon.HandleError(err)
-			}
-
-			// If there are no sessions to revoke we should return an error to indicate to the caller
-			// that the request failed.
-			count += localCount
+			ids = append(ids, f.ConsentChallengeID.String())
 		}
 
-		if count == 0 {
+		if len(ids) == 0 {
+			return nil
+		}
+
+		if err := p.QueryWithNetwork(ctx).
+			Where("nid = ?", nid).
+			Where("request_id IN (?)", ids...).
+			Delete(&OAuth2RequestSQL{Table: sqlTableAccess}); errors.Is(err, fosite.ErrNotFound) {
+			// do nothing
+		} else if err != nil {
+			return err
+		}
+
+		if err := p.QueryWithNetwork(ctx).
+			Where("nid = ?", nid).
+			Where("request_id IN (?)", ids...).
+			Delete(&OAuth2RequestSQL{Table: sqlTableRefresh}); errors.Is(err, fosite.ErrNotFound) {
+			// do nothing
+		} else if err != nil {
+			return err
+		}
+
+		if err := p.QueryWithNetwork(ctx).
+			Where("nid = ?", nid).
+			Where("consent_challenge_id IN (?)", ids...).
+			Delete(new(flow.Flow)); errors.Is(err, sql.ErrNoRows) {
 			return errorsx.WithStack(x.ErrNotFound)
+		} else if err != nil {
+			return sqlcon.HandleError(err)
 		}
 
 		return nil
 	}
 }
 
-func (p *Persister) RevokeSubjectLoginSession(ctx context.Context, subject string) error {
+func (p *Persister) RevokeSubjectLoginSession(ctx context.Context, subject string) (err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.RevokeSubjectLoginSession")
-	defer span.End()
+	defer otelx.End(span, &err)
 
-	err := p.QueryWithNetwork(ctx).Where("subject = ?", subject).Delete(&flow.LoginSession{})
+	err = p.QueryWithNetwork(ctx).Where("subject = ?", subject).Delete(&flow.LoginSession{})
 	if err != nil {
 		return sqlcon.HandleError(err)
 	}
@@ -113,11 +116,11 @@ func (p *Persister) RevokeSubjectLoginSession(ctx context.Context, subject strin
 	return nil
 }
 
-func (p *Persister) CreateForcedObfuscatedLoginSession(ctx context.Context, session *consent.ForcedObfuscatedLoginSession) error {
+func (p *Persister) CreateForcedObfuscatedLoginSession(ctx context.Context, session *consent.ForcedObfuscatedLoginSession) (err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.CreateForcedObfuscatedLoginSession")
-	defer span.End()
+	defer otelx.End(span, &err)
 
-	return p.transaction(ctx, func(ctx context.Context, c *pop.Connection) error {
+	return p.Transaction(ctx, func(ctx context.Context, c *pop.Connection) error {
 		nid := p.NetworkID(ctx)
 		if err := c.RawQuery(
 			"DELETE FROM hydra_oauth2_obfuscated_authentication_session WHERE nid = ? AND client_id = ? AND subject = ?",
@@ -138,9 +141,9 @@ func (p *Persister) CreateForcedObfuscatedLoginSession(ctx context.Context, sess
 	})
 }
 
-func (p *Persister) GetForcedObfuscatedLoginSession(ctx context.Context, client, obfuscated string) (*consent.ForcedObfuscatedLoginSession, error) {
-	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.GetForcedObfuscatedLoginSession")
-	defer span.End()
+func (p *Persister) GetForcedObfuscatedLoginSession(ctx context.Context, client, obfuscated string) (_ *consent.ForcedObfuscatedLoginSession, err error) {
+	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.GetForcedObfuscatedLoginSession", trace.WithAttributes(attribute.String("client", client)))
+	defer otelx.End(span, &err)
 
 	var s consent.ForcedObfuscatedLoginSession
 
@@ -161,9 +164,9 @@ func (p *Persister) GetForcedObfuscatedLoginSession(ctx context.Context, client,
 // CreateConsentRequest configures fields that are introduced or changed in the
 // consent request. It doesn't touch fields that would be copied from the login
 // request.
-func (p *Persister) CreateConsentRequest(ctx context.Context, f *flow.Flow, req *flow.OAuth2ConsentRequest) error {
+func (p *Persister) CreateConsentRequest(ctx context.Context, f *flow.Flow, req *flow.OAuth2ConsentRequest) (err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.CreateConsentRequest")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	if f == nil {
 		return errorsx.WithStack(x.ErrNotFound.WithDebug("Flow is nil"))
@@ -180,9 +183,9 @@ func (p *Persister) CreateConsentRequest(ctx context.Context, f *flow.Flow, req 
 	return nil
 }
 
-func (p *Persister) GetFlowByConsentChallenge(ctx context.Context, challenge string) (*flow.Flow, error) {
+func (p *Persister) GetFlowByConsentChallenge(ctx context.Context, challenge string) (_ *flow.Flow, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.GetFlowByConsentChallenge")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	// challenge contains the flow.
 	f, err := flowctx.Decode[flow.Flow](ctx, p.r.FlowCipher(), challenge, flowctx.AsConsentChallenge)
@@ -199,9 +202,9 @@ func (p *Persister) GetFlowByConsentChallenge(ctx context.Context, challenge str
 	return f, nil
 }
 
-func (p *Persister) GetConsentRequest(ctx context.Context, challenge string) (*flow.OAuth2ConsentRequest, error) {
+func (p *Persister) GetConsentRequest(ctx context.Context, challenge string) (_ *flow.OAuth2ConsentRequest, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.GetConsentRequest")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	f, err := p.GetFlowByConsentChallenge(ctx, challenge)
 	if err != nil {
@@ -217,9 +220,9 @@ func (p *Persister) GetConsentRequest(ctx context.Context, challenge string) (*f
 	return f.GetConsentRequest(), nil
 }
 
-func (p *Persister) CreateLoginRequest(ctx context.Context, req *flow.LoginRequest) (*flow.Flow, error) {
+func (p *Persister) CreateLoginRequest(ctx context.Context, req *flow.LoginRequest) (_ *flow.Flow, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.CreateLoginRequest")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	f := flow.NewFlow(req)
 	nid := p.NetworkID(ctx)
@@ -231,9 +234,9 @@ func (p *Persister) CreateLoginRequest(ctx context.Context, req *flow.LoginReque
 	return f, nil
 }
 
-func (p *Persister) GetFlow(ctx context.Context, loginChallenge string) (*flow.Flow, error) {
+func (p *Persister) GetFlow(ctx context.Context, loginChallenge string) (_ *flow.Flow, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.GetFlow")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	var f flow.Flow
 	if err := p.QueryWithNetwork(ctx).Where("login_challenge = ?", loginChallenge).First(&f); err != nil {
@@ -245,9 +248,9 @@ func (p *Persister) GetFlow(ctx context.Context, loginChallenge string) (*flow.F
 	return &f, nil
 }
 
-func (p *Persister) GetLoginRequest(ctx context.Context, loginChallenge string) (*flow.LoginRequest, error) {
+func (p *Persister) GetLoginRequest(ctx context.Context, loginChallenge string) (_ *flow.LoginRequest, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.GetLoginRequest")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	f, err := flowctx.Decode[flow.Flow](ctx, p.r.FlowCipher(), loginChallenge, flowctx.AsLoginChallenge)
 	if err != nil {
@@ -267,9 +270,9 @@ func (p *Persister) GetLoginRequest(ctx context.Context, loginChallenge string) 
 	return lr, nil
 }
 
-func (p *Persister) HandleConsentRequest(ctx context.Context, f *flow.Flow, r *flow.AcceptOAuth2ConsentRequest) (*flow.OAuth2ConsentRequest, error) {
+func (p *Persister) HandleConsentRequest(ctx context.Context, f *flow.Flow, r *flow.AcceptOAuth2ConsentRequest) (_ *flow.OAuth2ConsentRequest, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.HandleConsentRequest")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	if f == nil {
 		return nil, errorsx.WithStack(fosite.ErrInvalidRequest.WithDebug("Flow was nil"))
@@ -287,9 +290,9 @@ func (p *Persister) HandleConsentRequest(ctx context.Context, f *flow.Flow, r *f
 	return f.GetConsentRequest(), nil
 }
 
-func (p *Persister) VerifyAndInvalidateConsentRequest(ctx context.Context, verifier string) (*flow.AcceptOAuth2ConsentRequest, error) {
+func (p *Persister) VerifyAndInvalidateConsentRequest(ctx context.Context, verifier string) (_ *flow.AcceptOAuth2ConsentRequest, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.VerifyAndInvalidateConsentRequest")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	f, err := flowctx.Decode[flow.Flow](ctx, p.r.FlowCipher(), verifier, flowctx.AsConsentVerifier)
 	if err != nil {
@@ -316,7 +319,7 @@ func (p *Persister) VerifyAndInvalidateConsentRequest(ctx context.Context, verif
 
 func (p *Persister) HandleLoginRequest(ctx context.Context, f *flow.Flow, challenge string, r *flow.HandledLoginRequest) (lr *flow.LoginRequest, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.HandleLoginRequest")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	if f == nil {
 		return nil, errorsx.WithStack(fosite.ErrInvalidRequest.WithDebug("Flow was nil"))
@@ -333,9 +336,9 @@ func (p *Persister) HandleLoginRequest(ctx context.Context, f *flow.Flow, challe
 	return p.GetLoginRequest(ctx, challenge)
 }
 
-func (p *Persister) VerifyAndInvalidateLoginRequest(ctx context.Context, verifier string) (*flow.HandledLoginRequest, error) {
+func (p *Persister) VerifyAndInvalidateLoginRequest(ctx context.Context, verifier string) (_ *flow.HandledLoginRequest, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.VerifyAndInvalidateLoginRequest")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	f, err := flowctx.Decode[flow.Flow](ctx, p.r.FlowCipher(), verifier, flowctx.AsLoginVerifier)
 	if err != nil {
@@ -353,9 +356,9 @@ func (p *Persister) VerifyAndInvalidateLoginRequest(ctx context.Context, verifie
 	return &d, nil
 }
 
-func (p *Persister) GetRememberedLoginSession(ctx context.Context, loginSessionFromCookie *flow.LoginSession, id string) (*flow.LoginSession, error) {
+func (p *Persister) GetRememberedLoginSession(ctx context.Context, loginSessionFromCookie *flow.LoginSession, id string) (_ *flow.LoginSession, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.GetRememberedLoginSession")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	if s := loginSessionFromCookie; s != nil && s.NID == p.NetworkID(ctx) && s.ID == id && s.Remember {
 		return s, nil
@@ -373,9 +376,9 @@ func (p *Persister) GetRememberedLoginSession(ctx context.Context, loginSessionF
 }
 
 // ConfirmLoginSession creates or updates the login session. The NID will be set to the network ID of the context.
-func (p *Persister) ConfirmLoginSession(ctx context.Context, loginSession *flow.LoginSession) error {
+func (p *Persister) ConfirmLoginSession(ctx context.Context, loginSession *flow.LoginSession) (err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.ConfirmLoginSession")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	loginSession.NID = p.NetworkID(ctx)
 	loginSession.AuthenticatedAt = sqlxx.NullTime(time.Time(loginSession.AuthenticatedAt).Truncate(time.Second))
@@ -385,8 +388,7 @@ func (p *Persister) ConfirmLoginSession(ctx context.Context, loginSession *flow.
 		return p.mySQLConfirmLoginSession(ctx, loginSession)
 	}
 
-	err := p.Connection(ctx).Transaction(func(tx *pop.Connection) error {
-		res, err := tx.TX.NamedExec(`
+	res, err := p.Connection(ctx).Store.NamedExecContext(ctx, `
 INSERT INTO hydra_oauth2_authentication_session (id, nid, authenticated_at, subject, remember, identity_provider_session_id)
 VALUES (:id, :nid, :authenticated_at, :subject, :remember, :identity_provider_session_id)
 ON CONFLICT(id) DO
@@ -397,28 +399,22 @@ UPDATE SET
 	identity_provider_session_id = :identity_provider_session_id
 WHERE hydra_oauth2_authentication_session.id = :id AND hydra_oauth2_authentication_session.nid = :nid
 `, loginSession)
-		if err != nil {
-			return sqlcon.HandleError(err)
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return sqlcon.HandleError(err)
-		}
-		if n == 0 {
-			return errorsx.WithStack(x.ErrNotFound)
-		}
-		return nil
-	})
 	if err != nil {
-		return errors.WithStack(err)
+		return sqlcon.HandleError(err)
 	}
-
+	n, err := res.RowsAffected()
+	if err != nil {
+		return sqlcon.HandleError(err)
+	}
+	if n == 0 {
+		return errorsx.WithStack(x.ErrNotFound)
+	}
 	return nil
 }
 
-func (p *Persister) CreateLoginSession(ctx context.Context, session *flow.LoginSession) error {
+func (p *Persister) CreateLoginSession(ctx context.Context, session *flow.LoginSession) (err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.CreateLoginSession")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	nid := p.NetworkID(ctx)
 	if nid == uuid.Nil {
@@ -486,7 +482,7 @@ WHERE id = ? AND nid = ?`,
 
 func (p *Persister) FindGrantedAndRememberedConsentRequests(ctx context.Context, client, subject string) (rs []flow.AcceptOAuth2ConsentRequest, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.FindGrantedAndRememberedConsentRequests")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	var f flow.Flow
 	if err = p.Connection(ctx).
@@ -513,9 +509,10 @@ nid = ?`, flow.FlowStateConsentUsed, flow.FlowStateConsentUnused,
 	return p.filterExpiredConsentRequests(ctx, []flow.AcceptOAuth2ConsentRequest{*f.GetHandledConsentRequest()})
 }
 
-func (p *Persister) FindSubjectsGrantedConsentRequests(ctx context.Context, subject string, limit, offset int) ([]flow.AcceptOAuth2ConsentRequest, error) {
-	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.FindSubjectsGrantedConsentRequests")
-	defer span.End()
+func (p *Persister) FindSubjectsGrantedConsentRequests(ctx context.Context, subject string, limit, offset int) (_ []flow.AcceptOAuth2ConsentRequest, err error) {
+	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.FindSubjectsGrantedConsentRequests",
+		trace.WithAttributes(attribute.Int("limit", limit), attribute.Int("offset", offset)))
+	defer otelx.End(span, &err)
 
 	var fs []flow.Flow
 	c := p.Connection(ctx)
@@ -547,9 +544,10 @@ nid = ?`, flow.FlowStateConsentUsed, flow.FlowStateConsentUnused,
 	return p.filterExpiredConsentRequests(ctx, rs)
 }
 
-func (p *Persister) FindSubjectsSessionGrantedConsentRequests(ctx context.Context, subject, sid string, limit, offset int) ([]flow.AcceptOAuth2ConsentRequest, error) {
-	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.FindSubjectsSessionGrantedConsentRequests")
-	defer span.End()
+func (p *Persister) FindSubjectsSessionGrantedConsentRequests(ctx context.Context, subject, sid string, limit, offset int) (_ []flow.AcceptOAuth2ConsentRequest, err error) {
+	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.FindSubjectsSessionGrantedConsentRequests",
+		trace.WithAttributes(attribute.String("sid", sid), attribute.Int("limit", limit), attribute.Int("offset", offset)))
+	defer otelx.End(span, &err)
 
 	var fs []flow.Flow
 	c := p.Connection(ctx)
@@ -582,11 +580,14 @@ nid = ?`, flow.FlowStateConsentUsed, flow.FlowStateConsentUnused,
 	return p.filterExpiredConsentRequests(ctx, rs)
 }
 
-func (p *Persister) CountSubjectsGrantedConsentRequests(ctx context.Context, subject string) (int, error) {
+func (p *Persister) CountSubjectsGrantedConsentRequests(ctx context.Context, subject string) (n int, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.CountSubjectsGrantedConsentRequests")
-	defer span.End()
+	defer otelx.End(span, &err)
+	defer func() {
+		span.SetAttributes(attribute.Int("count", n))
+	}()
 
-	n, err := p.Connection(ctx).
+	n, err = p.Connection(ctx).
 		Where(
 			strings.TrimSpace(fmt.Sprintf(`
 (state = %d OR state = %d) AND
@@ -600,9 +601,9 @@ nid = ?`, flow.FlowStateConsentUsed, flow.FlowStateConsentUnused,
 	return n, sqlcon.HandleError(err)
 }
 
-func (p *Persister) filterExpiredConsentRequests(ctx context.Context, requests []flow.AcceptOAuth2ConsentRequest) ([]flow.AcceptOAuth2ConsentRequest, error) {
+func (p *Persister) filterExpiredConsentRequests(ctx context.Context, requests []flow.AcceptOAuth2ConsentRequest) (_ []flow.AcceptOAuth2ConsentRequest, err error) {
 	_, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.filterExpiredConsentRequests")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	var result []flow.AcceptOAuth2ConsentRequest
 	for _, v := range requests {
@@ -617,24 +618,25 @@ func (p *Persister) filterExpiredConsentRequests(ctx context.Context, requests [
 	return result, nil
 }
 
-func (p *Persister) ListUserAuthenticatedClientsWithFrontChannelLogout(ctx context.Context, subject, sid string) ([]client.Client, error) {
+func (p *Persister) ListUserAuthenticatedClientsWithFrontChannelLogout(ctx context.Context, subject, sid string) (_ []client.Client, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.ListUserAuthenticatedClientsWithFrontChannelLogout")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	return p.listUserAuthenticatedClients(ctx, subject, sid, "front")
 }
 
-func (p *Persister) ListUserAuthenticatedClientsWithBackChannelLogout(ctx context.Context, subject, sid string) ([]client.Client, error) {
+func (p *Persister) ListUserAuthenticatedClientsWithBackChannelLogout(ctx context.Context, subject, sid string) (_ []client.Client, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.ListUserAuthenticatedClientsWithBackChannelLogout")
-	defer span.End()
+	defer otelx.End(span, &err)
+
 	return p.listUserAuthenticatedClients(ctx, subject, sid, "back")
 }
 
-func (p *Persister) listUserAuthenticatedClients(ctx context.Context, subject, sid, channel string) ([]client.Client, error) {
-	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.listUserAuthenticatedClients")
-	defer span.End()
+func (p *Persister) listUserAuthenticatedClients(ctx context.Context, subject, sid, channel string) (cs []client.Client, err error) {
+	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.listUserAuthenticatedClients",
+		trace.WithAttributes(attribute.String("sid", sid)))
+	defer otelx.End(span, &err)
 
-	var cs []client.Client
 	if err := p.Connection(ctx).RawQuery(
 		/* #nosec G201 - channel can either be "front" or "back" */
 		fmt.Sprintf(`
@@ -642,7 +644,7 @@ SELECT DISTINCT c.* FROM hydra_client as c
 JOIN hydra_oauth2_flow as f ON (c.id = f.client_id AND c.nid = f.nid)
 WHERE
 	f.subject=? AND
-	c.%schannel_logout_uri!='' AND
+	c.%schannel_logout_uri != '' AND
 	c.%schannel_logout_uri IS NOT NULL AND
 	f.login_session_id = ? AND
 	f.nid = ? AND
@@ -661,16 +663,16 @@ WHERE
 	return cs, nil
 }
 
-func (p *Persister) CreateLogoutRequest(ctx context.Context, request *flow.LogoutRequest) error {
+func (p *Persister) CreateLogoutRequest(ctx context.Context, request *flow.LogoutRequest) (err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.CreateLogoutRequest")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	return errorsx.WithStack(p.CreateWithNetwork(ctx, request))
 }
 
-func (p *Persister) AcceptLogoutRequest(ctx context.Context, challenge string) (*flow.LogoutRequest, error) {
+func (p *Persister) AcceptLogoutRequest(ctx context.Context, challenge string) (_ *flow.LogoutRequest, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.AcceptLogoutRequest")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	if err := p.Connection(ctx).RawQuery("UPDATE hydra_oauth2_logout_request SET accepted=true, rejected=false WHERE challenge=? AND nid = ?", challenge, p.NetworkID(ctx)).Exec(); err != nil {
 		return nil, sqlcon.HandleError(err)
@@ -679,9 +681,9 @@ func (p *Persister) AcceptLogoutRequest(ctx context.Context, challenge string) (
 	return p.GetLogoutRequest(ctx, challenge)
 }
 
-func (p *Persister) RejectLogoutRequest(ctx context.Context, challenge string) error {
+func (p *Persister) RejectLogoutRequest(ctx context.Context, challenge string) (err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.RejectLogoutRequest")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	count, err := p.Connection(ctx).
 		RawQuery("UPDATE hydra_oauth2_logout_request SET rejected=true, accepted=false WHERE challenge=? AND nid = ?", challenge, p.NetworkID(ctx)).
@@ -693,17 +695,17 @@ func (p *Persister) RejectLogoutRequest(ctx context.Context, challenge string) e
 	}
 }
 
-func (p *Persister) GetLogoutRequest(ctx context.Context, challenge string) (*flow.LogoutRequest, error) {
+func (p *Persister) GetLogoutRequest(ctx context.Context, challenge string) (_ *flow.LogoutRequest, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.GetLogoutRequest")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	var lr flow.LogoutRequest
 	return &lr, sqlcon.HandleError(p.QueryWithNetwork(ctx).Where("challenge = ? AND rejected = FALSE", challenge).First(&lr))
 }
 
-func (p *Persister) VerifyAndInvalidateLogoutRequest(ctx context.Context, verifier string) (*flow.LogoutRequest, error) {
+func (p *Persister) VerifyAndInvalidateLogoutRequest(ctx context.Context, verifier string) (_ *flow.LogoutRequest, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.VerifyAndInvalidateLogoutRequest")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	var lr flow.LogoutRequest
 	if count, err := p.Connection(ctx).RawQuery(`
@@ -721,17 +723,24 @@ WHERE nid = ?
 		return nil, sqlcon.HandleError(err)
 	}
 
-	err := sqlcon.HandleError(p.QueryWithNetwork(ctx).Where("verifier = ?", verifier).First(&lr))
+	err = sqlcon.HandleError(p.QueryWithNetwork(ctx).Where("verifier = ?", verifier).First(&lr))
 	if err != nil {
 		return nil, err
+	}
+
+	if expiry := time.Time(lr.ExpiresAt);
+	// If the expiry is unset, we are in a legacy use case (allow logout).
+	// TODO: Remove this in the future.
+	!expiry.IsZero() && expiry.Before(time.Now().UTC()) {
+		return nil, errorsx.WithStack(flow.ErrorLogoutFlowExpired)
 	}
 
 	return &lr, nil
 }
 
-func (p *Persister) FlushInactiveLoginConsentRequests(ctx context.Context, notAfter time.Time, limit int, batchSize int) error {
+func (p *Persister) FlushInactiveLoginConsentRequests(ctx context.Context, notAfter time.Time, limit int, batchSize int) (err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.FlushInactiveLoginConsentRequests")
-	defer span.End()
+	defer otelx.End(span, &err)
 
 	/* #nosec G201 table is static */
 	var f flow.Flow

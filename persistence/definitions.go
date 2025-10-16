@@ -33,7 +33,8 @@ type (
 		MigrateUp(context.Context) error
 		PrepareMigration(context.Context) error
 		Connection(context.Context) *pop.Connection
-		Ping() error
+		Transaction(context.Context, func(ctx context.Context, c *pop.Connection) error) error
+		Ping(context.Context) error
 		Networker
 	}
 	Provider interface {

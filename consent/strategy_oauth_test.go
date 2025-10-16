@@ -37,12 +37,11 @@ import (
 	hydra "github.com/ory/hydra-client-go/v2"
 	"github.com/ory/hydra/v2/client"
 	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/internal"
 )
 
 func TestStrategyLoginConsentNext(t *testing.T) {
 	ctx := context.Background()
-	reg := internal.NewMockedRegistry(t, &contextx.Default{})
+	reg := testhelpers.NewMockedRegistry(t, &contextx.Default{})
 	reg.Config().MustSet(ctx, config.KeyAccessTokenStrategy, "opaque")
 	reg.Config().MustSet(ctx, config.KeyConsentRequestMaxAge, time.Hour)
 	reg.Config().MustSet(ctx, config.KeyConsentRequestMaxAge, time.Hour)
@@ -155,7 +154,7 @@ func TestStrategyLoginConsentNext(t *testing.T) {
 
 	t.Run("case=should fail because the request was redirected but the login endpoint rejected the request", func(t *testing.T) {
 		testhelpers.NewLoginConsentUI(t, reg.Config(), func(w http.ResponseWriter, r *http.Request) {
-			vr, _, err := adminClient.OAuth2Api.RejectOAuth2LoginRequest(context.Background()).
+			vr, _, err := adminClient.OAuth2API.RejectOAuth2LoginRequest(context.Background()).
 				LoginChallenge(r.URL.Query().Get("login_challenge")).
 				RejectOAuth2Request(hydra.RejectOAuth2Request{
 					Error:            pointerx.String(fosite.ErrInteractionRequired.ErrorField),
@@ -186,7 +185,7 @@ func TestStrategyLoginConsentNext(t *testing.T) {
 		testhelpers.NewLoginConsentUI(t, reg.Config(),
 			acceptLoginHandler(t, "aeneas-rekkas", nil),
 			func(w http.ResponseWriter, r *http.Request) {
-				vr, _, err := adminClient.OAuth2Api.RejectOAuth2ConsentRequest(context.Background()).
+				vr, _, err := adminClient.OAuth2API.RejectOAuth2ConsentRequest(context.Background()).
 					ConsentChallenge(r.URL.Query().Get("consent_challenge")).
 					RejectOAuth2Request(hydra.RejectOAuth2Request{
 						Error:            pointerx.String(fosite.ErrInteractionRequired.ErrorField),
@@ -208,13 +207,13 @@ func TestStrategyLoginConsentNext(t *testing.T) {
 
 		testhelpers.NewLoginConsentUI(t, reg.Config(),
 			func(w http.ResponseWriter, r *http.Request) {
-				res, _, err := adminClient.OAuth2Api.GetOAuth2LoginRequest(ctx).
+				res, _, err := adminClient.OAuth2API.GetOAuth2LoginRequest(ctx).
 					LoginChallenge(r.URL.Query().Get("login_challenge")).
 					Execute()
 				require.NoError(t, err)
 				loginChallenge = res.Challenge
 
-				v, _, err := adminClient.OAuth2Api.AcceptOAuth2LoginRequest(ctx).
+				v, _, err := adminClient.OAuth2API.AcceptOAuth2LoginRequest(ctx).
 					LoginChallenge(loginChallenge).
 					AcceptOAuth2LoginRequest(hydra.AcceptOAuth2LoginRequest{Subject: "aeneas-rekkas"}).
 					Execute()
@@ -223,13 +222,13 @@ func TestStrategyLoginConsentNext(t *testing.T) {
 				http.Redirect(w, r, v.RedirectTo, http.StatusFound)
 			},
 			func(w http.ResponseWriter, r *http.Request) {
-				res, _, err := adminClient.OAuth2Api.GetOAuth2ConsentRequest(ctx).
+				res, _, err := adminClient.OAuth2API.GetOAuth2ConsentRequest(ctx).
 					ConsentChallenge(r.URL.Query().Get("consent_challenge")).
 					Execute()
 				require.NoError(t, err)
 				consentChallenge = res.Challenge
 
-				v, _, err := adminClient.OAuth2Api.AcceptOAuth2ConsentRequest(ctx).
+				v, _, err := adminClient.OAuth2API.AcceptOAuth2ConsentRequest(ctx).
 					ConsentChallenge(consentChallenge).
 					AcceptOAuth2ConsentRequest(hydra.AcceptOAuth2ConsentRequest{}).
 					Execute()
@@ -241,7 +240,7 @@ func TestStrategyLoginConsentNext(t *testing.T) {
 		makeRequestAndExpectCode(t, hc, c, url.Values{})
 
 		t.Run("case=double-submit login verifier", func(t *testing.T) {
-			v, _, err := adminClient.OAuth2Api.AcceptOAuth2LoginRequest(ctx).
+			v, _, err := adminClient.OAuth2API.AcceptOAuth2LoginRequest(ctx).
 				LoginChallenge(loginChallenge).
 				AcceptOAuth2LoginRequest(hydra.AcceptOAuth2LoginRequest{Subject: "aeneas-rekkas"}).
 				Execute()
@@ -255,7 +254,7 @@ func TestStrategyLoginConsentNext(t *testing.T) {
 		})
 
 		t.Run("case=double-submit consent verifier", func(t *testing.T) {
-			v, _, err := adminClient.OAuth2Api.AcceptOAuth2ConsentRequest(ctx).
+			v, _, err := adminClient.OAuth2API.AcceptOAuth2ConsentRequest(ctx).
 				ConsentChallenge(consentChallenge).
 				AcceptOAuth2ConsentRequest(hydra.AcceptOAuth2ConsentRequest{}).
 				Execute()
@@ -289,6 +288,7 @@ func TestStrategyLoginConsentNext(t *testing.T) {
 
 		subject := "aeneas-rekkas"
 		c := createDefaultClient(t)
+		now := 1723546027 // Unix timestamps must round-trip through Hydra without converting to floats or similar
 		testhelpers.NewLoginConsentUI(t, reg.Config(),
 			acceptLoginHandler(t, subject, &hydra.AcceptOAuth2LoginRequest{
 				Remember: pointerx.Bool(true),
@@ -297,8 +297,14 @@ func TestStrategyLoginConsentNext(t *testing.T) {
 				Remember:   pointerx.Bool(true),
 				GrantScope: []string{"openid"},
 				Session: &hydra.AcceptOAuth2ConsentRequestSession{
-					AccessToken: map[string]interface{}{"foo": "bar"},
-					IdToken:     map[string]interface{}{"bar": "baz"},
+					AccessToken: map[string]interface{}{
+						"foo": "bar",
+						"ts1": now,
+					},
+					IdToken: map[string]interface{}{
+						"bar": "baz",
+						"ts2": now,
+					},
 				},
 			}))
 
@@ -314,12 +320,14 @@ func TestStrategyLoginConsentNext(t *testing.T) {
 			require.NoError(t, err)
 
 			claims := testhelpers.IntrospectToken(t, conf, token.AccessToken, adminTS)
-			assert.Equal(t, "bar", claims.Get("ext.foo").String(), "%s", claims.Raw)
+			assert.Equalf(t, `"bar"`, claims.Get("ext.foo").Raw, "%s", claims.Raw)      // Raw rather than .Int() or .Value() to verify the exact JSON payload
+			assert.Equalf(t, "1723546027", claims.Get("ext.ts1").Raw, "%s", claims.Raw) // must round-trip as integer
 
 			idClaims := testhelpers.DecodeIDToken(t, token)
-			assert.Equal(t, "baz", idClaims.Get("bar").String(), "%s", idClaims.Raw)
+			assert.Equalf(t, `"baz"`, idClaims.Get("bar").Raw, "%s", idClaims.Raw)      // Raw rather than .Int() or .Value() to verify the exact JSON payload
+			assert.Equalf(t, "1723546027", idClaims.Get("ts2").Raw, "%s", idClaims.Raw) // must round-trip as integer
 			sid = idClaims.Get("sid").String()
-			assert.NotNil(t, sid)
+			assert.NotEmpty(t, sid)
 		}
 
 		t.Run("perform first flow", run)
@@ -334,21 +342,28 @@ func TestStrategyLoginConsentNext(t *testing.T) {
 					assert.Empty(t, pointerx.StringR(res.Client.ClientSecret))
 					return hydra.AcceptOAuth2LoginRequest{
 						Subject: subject,
-						Context: map[string]interface{}{"foo": "bar"},
+						Context: map[string]interface{}{"xyz": "abc"},
 					}
 				}),
-				checkAndAcceptConsentHandler(t, adminClient, func(t *testing.T, res *hydra.OAuth2ConsentRequest, err error) hydra.AcceptOAuth2ConsentRequest {
+				checkAndAcceptConsentHandler(t, adminClient, func(t *testing.T, req *hydra.OAuth2ConsentRequest, err error) hydra.AcceptOAuth2ConsentRequest {
 					require.NoError(t, err)
-					assert.True(t, *res.Skip)
-					assert.Equal(t, sid, *res.LoginSessionId)
-					assert.Equal(t, subject, *res.Subject)
-					assert.Empty(t, pointerx.StringR(res.Client.ClientSecret))
+					assert.True(t, *req.Skip)
+					assert.Equal(t, sid, *req.LoginSessionId)
+					assert.Equal(t, subject, *req.Subject)
+					assert.Empty(t, pointerx.StringR(req.Client.ClientSecret))
+					assert.Equal(t, map[string]interface{}{"xyz": "abc"}, req.Context)
 					return hydra.AcceptOAuth2ConsentRequest{
 						Remember:   pointerx.Bool(true),
 						GrantScope: []string{"openid"},
 						Session: &hydra.AcceptOAuth2ConsentRequestSession{
-							AccessToken: map[string]interface{}{"foo": "bar"},
-							IdToken:     map[string]interface{}{"bar": "baz"},
+							AccessToken: map[string]interface{}{
+								"foo": "bar",
+								"ts1": now,
+							},
+							IdToken: map[string]interface{}{
+								"bar": "baz",
+								"ts2": now,
+							},
 						},
 					}
 				}))
@@ -712,7 +727,7 @@ func TestStrategyLoginConsentNext(t *testing.T) {
 
 		testhelpers.NewLoginConsentUI(t, reg.Config(),
 			func(w http.ResponseWriter, r *http.Request) {
-				res, _, err := adminClient.OAuth2Api.AcceptOAuth2LoginRequest(context.Background()).
+				res, _, err := adminClient.OAuth2API.AcceptOAuth2LoginRequest(context.Background()).
 					LoginChallenge(r.URL.Query().Get("login_challenge")).
 					AcceptOAuth2LoginRequest(hydra.AcceptOAuth2LoginRequest{
 						Subject: "not-aeneas-rekkas",
@@ -807,7 +822,7 @@ func TestStrategyLoginConsentNext(t *testing.T) {
 		makeRequestAndExpectCode(t, hc, c, url.Values{})
 
 		// Make request with additional scope and prompt none, which fails
-		makeRequestAndExpectError(t, hc, c, url.Values{"prompt": {"none"}, "scope": {"openid"}},
+		makeRequestAndExpectError(t, hc, c, url.Values{"prompt": {"none"}, "scope": {"openid"}, "redirect_uri": {c.RedirectURIs[0]}},
 			"Prompt 'none' was requested, but no previous consent was found")
 	})
 
@@ -914,11 +929,11 @@ func TestStrategyLoginConsentNext(t *testing.T) {
 		}{
 			{
 				d:      "check all the sub claims",
-				values: url.Values{"scope": {"openid"}},
+				values: url.Values{"scope": {"openid"}, "redirect_uri": {c.RedirectURIs[0]}},
 			},
 			{
 				d:      "works with id_token_hint",
-				values: url.Values{"scope": {"openid"}, "id_token_hint": {testhelpers.NewIDToken(t, reg, hash)}},
+				values: url.Values{"scope": {"openid"}, "redirect_uri": {c.RedirectURIs[0]}, "id_token_hint": {testhelpers.NewIDToken(t, reg, hash)}},
 			},
 		} {
 			t.Run("case="+tc.d, func(t *testing.T) {
@@ -958,7 +973,7 @@ func TestStrategyLoginConsentNext(t *testing.T) {
 			}),
 			acceptConsentHandler(t, &hydra.AcceptOAuth2ConsentRequest{GrantScope: []string{"openid"}}))
 
-		code := makeRequestAndExpectCode(t, nil, c, url.Values{})
+		code := makeRequestAndExpectCode(t, nil, c, url.Values{"redirect_uri": {c.RedirectURIs[0]}})
 
 		conf := oauth2Config(t, c)
 		token, err := conf.Exchange(context.Background(), code)

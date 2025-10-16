@@ -35,6 +35,11 @@
   },
   "request": {
     "client_id": "app-client",
+    "requested_scopes": [
+      "hydra.*",
+      "offline",
+      "openid"
+    ],
     "granted_scopes": [
       "offline",
       "openid",
@@ -44,6 +49,10 @@
     "grant_types": [
       "refresh_token"
     ],
-    "payload": {}
+    "payload": {
+      "grant_type": [
+        "refresh_token"
+      ]
+    }
   }
 }

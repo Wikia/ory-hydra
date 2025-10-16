@@ -1,4 +1,4 @@
-FROM golang:1.21 AS builder
+FROM golang:1.22 AS builder
 
 RUN apt-get update && \
     apt-get install --no-install-recommends -y \
@@ -18,9 +18,9 @@ RUN go mod download
 
 COPY . .
 
-RUN go build -tags sqlite,json1 -o /usr/bin/hydra
+RUN go build -tags sqlite -o /usr/bin/hydra
 
-VOLUME /var/lib/sqlite
+VOLUME /mnt/sqlite
 
 # Exposing the ory home directory
 VOLUME /home/ory
